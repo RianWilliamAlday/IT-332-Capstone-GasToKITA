@@ -1,7 +1,6 @@
 # IT 332 Capstone GasToKita
 
-1. Stil undecided on which language we will use, python or flutter
-2. Possible to switch from a web app to a desktop and mobile application
+The system will use python as its programming language and flet for framework, flet is an open-source framework that can be used to build a web, desktop, and mobile applications using Python. Since Flet is a cross-platform framework, this fits our project as we were planning to create an app for both desktop and mobile.
 
 Colors to be used by the system:
 
