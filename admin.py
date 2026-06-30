@@ -4,7 +4,7 @@ RED = "#A61E22"
 LIGHT_GRAY = "#E9E9E9"
 CARD_GRAY = "#D9D9D9"
 
-def main(page: ft.Page):
+def admin(page: ft.Page):
     page.title = "GasToKITA"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.bgcolor = LIGHT_GRAY
@@ -59,16 +59,6 @@ def main(page: ft.Page):
         bgcolor=RED,
     )
 
-    email_field = ft.TextField(
-        hint_text="Enter your email",
-        keyboard_type=ft.KeyboardType.EMAIL,
-        border_radius=25,
-        border_color="black",
-        bgcolor="white",
-        width=330,
-        height=50,
-    )
-
     password_field = ft.TextField(
         hint_text="Enter your password",
         password=True,
@@ -82,42 +72,39 @@ def main(page: ft.Page):
 
     login_card = ft.Container(
         width=460,
-        height=400,
+        height=320,
         bgcolor=CARD_GRAY,
         border=ft.Border.all(2, ft.Colors.BLACK),
         border_radius=25,
         alignment=ft.Alignment(0, 0),
-        padding=20,  
+        padding=20,
         content=ft.Column(
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=15,
+            spacing=18,
             controls=[
                 ft.Text(
-                    "Pump Attendant Login",
-                    size=28,
+                    "Admin Login",
+                    size=32,
                     weight=ft.FontWeight.BOLD,
                 ),
-
+                ft.Text(
+                    "Please enter your password to enter the admin system",
+                    size=14,
+                    weight=ft.FontWeight.W_500,
+                    text_align=ft.TextAlign.CENTER,
+                ),
                 ft.Column(
-                    spacing=4,
+                    spacing=8,
                     horizontal_alignment=ft.CrossAxisAlignment.START,
                     controls=[
-                        ft.Text("Email:", size=14, weight=ft.FontWeight.BOLD),
-                        email_field,
+                        ft.Text(
+                            "Password:",
+                            size=16,
+                            weight=ft.FontWeight.BOLD,
+                        ),
+                        password_field
                     ],
                 ),
-
-                ft.Column(
-                    spacing=4,
-                    horizontal_alignment=ft.CrossAxisAlignment.START,
-                    controls=[
-                        ft.Text("Password:", size=14, weight=ft.FontWeight.BOLD),
-                        password_field,
-                    ],
-                ),
-
-                ft.Container(height=5),
-
                 ft.Button(
                     "Login",
                     width=130,
@@ -135,6 +122,7 @@ def main(page: ft.Page):
             ],
         ),
     )
+    
 
     page.add(
         ft.Column(
@@ -148,10 +136,10 @@ def main(page: ft.Page):
                     alignment=ft.Alignment(0, 0),
                     content=login_card,
                 ),
-                footer
+
+                footer,
             ],
         )
     )
 
-
-ft.run(main)
+ft.run(admin)
