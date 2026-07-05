@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
-from db.database import get_session, Fuel, Pump
-from models.schemas import DispenseRequest
-from services.dipstick import get_closest_dipstick_reading
+from ..db.database import get_session, Fuel, Pump
+from ..models.schemas import DispenseRequest
+from ..services.dipstick import get_closest_dipstick_reading
 
 router = APIRouter(prefix="/api/dispense", tags=["dispense"])
 
@@ -34,7 +34,6 @@ def dispense_fuel(data: DispenseRequest, session: Session = Depends(get_session)
     session.refresh(fuel)
 
     cm, display_liters = get_closest_dipstick_reading(fuel.actual_liters)
-    # Use fuel.tank_capacity and cap at 100%
     percentage = min(100.0, round((display_liters / fuel.tank_capacity) * 100, 2))
 
     return {

@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from typing import List
-from models.schemas import Pump
-from db.data import pumps
+from ..models.schemas import Pump
+from ..db.data import pumps
 
 router = APIRouter(prefix="/api/pumps", tags=["pumps"])
 

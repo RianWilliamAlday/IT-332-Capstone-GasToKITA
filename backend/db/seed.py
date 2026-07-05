@@ -1,5 +1,7 @@
+from requests import session
 from sqlmodel import Session, select
-from.database import engine, Fuel, Pump
+from.database import User, UserRole, engine, Fuel, Pump
+from services.auth import hash_password
 import json, os
 
 def seed_data():
@@ -31,6 +33,18 @@ def seed_data():
         session.add_all(pumps)
         session.commit()
         print("Seeded DB")
+
+        admin_exists = session.exec(select(User).where(User.role == UserRole.ADMIN)).first()
+        if not admin_exists:
+            admin = User(
+                name="Admin",
+                email=None,
+                password_hash=hash_password("admin123"),
+                role=UserRole.ADMIN
+            )
+        session.add(admin)
+        session.commit()
+        print("Created default admin with password: admin123")
 
 if __name__ == "__main__":
     from.database import create_db_and_tables
