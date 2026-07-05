@@ -1,4 +1,4 @@
-from db.data import DIPSTICK_DATA
+from ..db.data import DIPSTICK_DATA
 
 def get_closest_dipstick_reading(actual_liters: float) -> tuple[int, int]:
     if actual_liters <= 0:

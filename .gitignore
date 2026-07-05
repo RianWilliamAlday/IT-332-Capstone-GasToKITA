@@ -4,3 +4,4 @@ pages/splash.py
 pages/template.py
 __pycache__
 backend/gastokita.db
+gastokita.db
