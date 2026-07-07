@@ -139,4 +139,3 @@ if _name_ == "_main_":
         threading.Thread(target=run_backend, daemon=True).start()
         time.sleep(0.5)
     ft.run(main, assets_dir=str(BASE_DIR))
-127.0.0.1
