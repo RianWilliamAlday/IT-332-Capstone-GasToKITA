@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from ..db.database import get_session, Fuel, RestockLog
-from ..models.schemas import FuelTypeResponse, PriceUpdate, RestockRequest, ThresholdUpdate
+from ..models.schemas import FuelTypeResponse, PriceUpdate, RestockRequest, ThresholdUpdate, InventoryMetrics
 from ..services.dipstick import get_closest_dipstick_reading
+from..services.ai_feature import get_ai_reorder_insights
+from datetime import datetime
+from typing import List
 import json, os
 
 router = APIRouter(prefix="/api/fuels", tags=["fuels"])
@@ -16,7 +19,6 @@ MAX_CM = max(DIPSTICK_DATA.keys())
 def check_low_stock(fuel: Fuel) -> bool:
     return fuel.actual_liters <= fuel.threshold
 
-# Update your existing GET to include threshold + needs_restock
 @router.get("", response_model=list[FuelTypeResponse])
 def get_fuels(session: Session = Depends(get_session)):
     fuels = session.exec(select(Fuel)).all()
@@ -38,7 +40,6 @@ def get_fuels(session: Session = Depends(get_session)):
         ))
     return response_data
 
-# Add this: Get only low stock fuels for alerts
 @router.get("/low-stock", response_model=list[FuelTypeResponse])
 def get_low_stock_fuels(session: Session = Depends(get_session)):
     fuels = session.exec(select(Fuel)).all()
@@ -80,19 +81,17 @@ def restock_fuel(
             400, 
             f"Exceeds tank capacity. Only {remaining:.2f}L space left"
         )
-    
-    # Update stock
+
     fuel.actual_liters += data.liters_added
     fuel.last_restocked = datetime.now()
     session.add(fuel)
-    
-    # Log restock
+
     log = RestockLog(
         fuel_id=fuel.id,
         liters_added=data.liters_added,
         cost=data.cost,
         supplier=data.supplier,
-        restocked_by="admin" # TODO: get from JWT token
+        restocked_by="admin"
     )
     session.add(log)
     session.commit()
@@ -109,7 +108,6 @@ def restock_fuel(
         "needs_restock": check_low_stock(fuel)
     }
 
-# Add this: Update threshold
 @router.patch("/{fuel_id}/threshold")
 def update_threshold(
     fuel_id: int, 
@@ -209,3 +207,38 @@ def sync_from_dipstick(
         "new_liters": new_liters,
         "difference": new_liters - old_liters
     }
+
+class AIInventoryMetrics(InventoryMetrics):
+    ai_urgency_explanation: str
+    ai_demand_insight: str
+    ai_purchase_recommendation: str
+    ai_risk_factors: List[str]
+    ai_action_items: List[str]
+
+@router.get("/ai-inventory-optimization", response_model=List[AIInventoryMetrics])
+def get_ai_inventory_optimization(session: Session = Depends(get_session)):
+    base_metrics = get_inventory_optimization(session)
+    enhanced_results = []
+    for metric in base_metrics:
+        fuel_dict = metric.dict()
+        if metric.urgency in ["critical", "warning", "overstocked"]:
+            ai_data = get_ai_reorder_insights(fuel_dict)
+        else:
+            ai_data = {
+                "urgency_explanation": "Stock levels normal",
+                "demand_insight": f"Usage stable at {metric.avg_daily_usage}L/day",
+                "purchase_recommendation": "No action needed",
+                "risk_factors": [],
+                "action_items": ["Monitor weekly"]
+            }
+
+        enhanced_results.append(AIInventoryMetrics(
+            **fuel_dict,
+            ai_urgency_explanation=ai_data["urgency_explanation"],
+            ai_demand_insight=ai_data["demand_insight"],
+            ai_purchase_recommendation=ai_data["purchase_recommendation"],
+            ai_risk_factors=ai_data["risk_factors"],
+            ai_action_items=ai_data["action_items"]
+        ))
+
+    return enhanced_results
