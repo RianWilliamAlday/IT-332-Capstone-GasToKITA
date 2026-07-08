@@ -1,0 +1,73 @@
+from sqlmodel import SQLModel, Field, create_engine, Session, select, Relationship
+from typing import Optional
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DB_FILE = PROJECT_ROOT / "gastokita.db"
+engine = create_engine("sqlite:///gastokita.db", echo=False)
+print(f"=== USING DATABASE: {DB_FILE} ===")
+
+class UserRole(str, Enum):
+    ADMIN = "ADMIN"
+    EMPLOYEE = "EMPLOYEE"
+
+class User(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    email: Optional[str] = Field(default=None, index=True, unique=True)
+    password_hash: str
+    role: UserRole
+    name: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    is_active: bool = True
+
+class Fuel(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    price: float
+    actual_liters: float
+    tank_capacity: float
+    threshold: float = Field(default=100.0) # warn if below this
+    last_restocked: Optional[datetime] = Field(default=None)
+
+class Pump(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    fuel_type_id: int = Field(foreign_key="fuel.id")
+    status: str = "Available"
+
+def create_db_and_tables():
+    SQLModel.metadata.create_all(engine)
+
+def get_session():
+    with Session(engine) as session:
+        yield session
+
+class RestockLog(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fuel_id: int = Field(foreign_key="fuel.id")
+    liters_added: float
+    cost: float
+    supplier: Optional[str] = None
+    restocked_by: str
+    restocked_at: datetime = Field(default_factory=datetime.now)
+
+class Sale(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fuel_id: int = Field(foreign_key="fuel.id")
+    pump_id: int = Field(foreign_key="pump.id")
+    
+    # Remove cashier_id, use this instead
+    attendant_name: str = Field(index=True) # "Attendant 1", "Attendant 2", "Attendant 3"
+    recorded_by: int = Field(foreign_key="user.id") # cashier who recorded it
+    
+    liters_sold: float
+    price_per_liter: float
+    total_amount: float
+    payment_method: str = Field(default="cash")
+    sold_at: datetime = Field(default_factory=datetime.now)
+    
+    # Relationships
+    recorded_by_user: Optional[User] = Relationship()
+    fuel: Optional[Fuel] = Relationship()
