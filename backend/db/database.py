@@ -28,7 +28,7 @@ class Fuel(SQLModel, table=True):
     price: float
     actual_liters: float
     tank_capacity: float
-    threshold: float = Field(default=100.0) # warn if below this
+    threshold: float = Field(default=100.0)
     last_restocked: Optional[datetime] = Field(default=None)
 
 class Pump(SQLModel, table=True):
@@ -57,17 +57,12 @@ class Sale(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     fuel_id: int = Field(foreign_key="fuel.id")
     pump_id: int = Field(foreign_key="pump.id")
-    
-    # Remove cashier_id, use this instead
-    attendant_name: str = Field(index=True) # "Attendant 1", "Attendant 2", "Attendant 3"
-    recorded_by: int = Field(foreign_key="user.id") # cashier who recorded it
-    
+    attendant_name: str = Field(index=True)
+    recorded_by: int = Field(foreign_key="user.id")
     liters_sold: float
     price_per_liter: float
     total_amount: float
     payment_method: str = Field(default="cash")
     sold_at: datetime = Field(default_factory=datetime.now)
-    
-    # Relationships
     recorded_by_user: Optional[User] = Relationship()
     fuel: Optional[Fuel] = Relationship()

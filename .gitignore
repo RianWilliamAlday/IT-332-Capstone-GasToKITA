@@ -3,4 +3,4 @@ pages/template.py
 __pycache__
 backend/gastokita.db
 gastokita.db
-pages/admin_dashboard.py
+.env
