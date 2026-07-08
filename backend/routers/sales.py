@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlmodel import Session, select
+from sqlmodel import Session, select,  and_, func
 from..db.database import get_session, Sale, Fuel, User, Pump
-from..models.schemas import SaleCreate, SaleResponse, AttendantSalesSummary
-from datetime import datetime, date
+from..models.schemas import SaleCreate, SaleResponse, AttendantSalesSummary, SaleHistoryItem, SalesHistoryResponse
+from datetime import datetime, date, time
 from typing import List, Optional
 
 router = APIRouter(prefix="/api/sales", tags=["sales"])
@@ -26,12 +26,8 @@ def create_sale(data: SaleCreate, session: Session = Depends(get_session)):
         raise HTTPException(404, "Pump not found")
     if pump.fuel_id!= data.fuel_id:
         raise HTTPException(400, "Pump fuel type mismatch")
-    
-    # Deduct stock
     fuel.actual_liters -= data.liters_sold
     session.add(fuel)
-    
-    # For now hardcode recorded_by=1, replace with actual cashier from JWT
     recorded_by_id = 1
     cashier = session.get(User, recorded_by_id)
     
@@ -133,3 +129,153 @@ def get_attendant_summary(
         summary[name]["by_fuel"][fuel.name] = summary[name]["by_fuel"].get(fuel.name, 0) + sale.total_amount
     
     return list(summary.values())
+
+@router.get("/history", response_model=SalesHistoryResponse)
+def get_sales_history(
+    start_date: Optional[date] = Query(None, description="YYYY-MM-DD"),
+    end_date: Optional[date] = Query(None, description="YYYY-MM-DD"),
+    fuel_id: Optional[int] = Query(None),
+    attendant_name: Optional[str] = Query(None),
+    pump_id: Optional[int] = Query(None),
+    payment_method: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    session: Session = Depends(get_session)
+):
+    filters = []
+
+    if start_date:
+        filters.append(Sale.sold_at >= datetime.combine(start_date, time.min))
+    if end_date:
+        filters.append(Sale.sold_at <= datetime.combine(end_date, time.max))
+    if fuel_id:
+        filters.append(Sale.fuel_id == fuel_id)
+    if attendant_name:
+        filters.append(Sale.attendant_name == attendant_name)
+    if pump_id:
+        filters.append(Sale.pump_id == pump_id)
+    if payment_method:
+        filters.append(Sale.payment_method == payment_method)
+
+    query = select(Sale)
+    if filters:
+        query = query.where(and_(*filters))
+    count_query = select(func.count()).select_from(Sale)
+    total_query = select(
+        func.sum(Sale.total_amount),
+        func.sum(Sale.liters_sold)
+    ).select_from(Sale)
+
+    if filters:
+        count_query = count_query.where(and_(*filters))
+        total_query = total_query.where(and_(*filters))
+
+    total_count = session.exec(count_query).one()
+    total_amount, total_liters = session.exec(total_query).one()
+    offset = (page - 1) * page_size
+    sales = session.exec(
+        query.order_by(Sale.sold_at.desc())
+       .offset(offset)
+       .limit(page_size)
+    ).all()
+    items = []
+    for sale in sales:
+        fuel = session.get(Fuel, sale.fuel_id)
+        pump = session.get(Pump, sale.pump_id)
+        cashier = session.get(User, sale.recorded_by)
+
+        items.append(SaleHistoryItem(
+            id=sale.id,
+            sold_at=sale.sold_at,
+            fuel_name=fuel.name if fuel else "Unknown",
+            pump_name=pump.name if pump else "Unknown",
+            attendant_name=sale.attendant_name,
+            liters_sold=sale.liters_sold,
+            price_per_liter=sale.price_per_liter,
+            total_amount=sale.total_amount,
+            payment_method=sale.payment_method,
+            recorded_by=cashier.username if cashier else "Unknown"
+        ))
+
+    return SalesHistoryResponse(
+        sales=items,
+        total_count=total_count,
+        total_amount=total_amount or 0.0,
+        total_liters=total_liters or 0.0,
+        page=page,
+        page_size=page_size
+    )
+
+@router.get("/history/export")
+def export_sales_csv(
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    session: Session = Depends(get_session)
+):
+    from fastapi.responses import StreamingResponse
+    import csv
+    import io
+
+    query = select(Sale)
+    if start_date:
+        query = query.where(Sale.sold_at >= datetime.combine(start_date, time.min))
+    if end_date:
+        query = query.where(Sale.sold_at <= datetime.combine(end_date, time.max))
+
+    sales = session.exec(query.order_by(Sale.sold_at.desc())).all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Date", "Time", "Fuel", "Pump", "Attendant", "Liters",
+        "Price/L", "Total", "Payment", "Recorded By"
+    ])
+
+    for sale in sales:
+        fuel = session.get(Fuel, sale.fuel_id)
+        pump = session.get(Pump, sale.pump_id)
+        cashier = session.get(User, sale.recorded_by)
+        writer.writerow([
+            sale.sold_at.strftime("%Y-%m-%d"),
+            sale.sold_at.strftime("%H:%M:%S"),
+            fuel.name,
+            pump.name,
+            sale.attendant_name,
+            f"{sale.liters_sold:.2f}",
+            f"{sale.price_per_liter:.2f}",
+            f"{sale.total_amount:.2f}",
+            sale.payment_method,
+            cashier.username
+        ])
+
+    output.seek(0)
+    filename = f"sales_{start_date or 'all'}_to_{end_date or 'all'}.csv"
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@router.get("/history/today")
+def get_today_history(session: Session = Depends(get_session)):
+    today = date.today()
+    return get_sales_history(
+        start_date=today,
+        end_date=today,
+        session=session
+    )
+
+@router.delete("/{sale_id}")
+def void_sale(sale_id: int, session: Session = Depends(get_session)):
+    sale = session.get(Sale, sale_id)
+    if not sale:
+        raise HTTPException(404, "Sale not found")
+    fuel = session.get(Fuel, sale.fuel_id)
+    if fuel:
+        fuel.actual_liters += sale.liters_sold
+        session.add(fuel)
+
+    session.delete(sale)
+    session.commit()
+
+    return {"message": f"Sale {sale_id} voided. {sale.liters_sold}L returned to tank."}
