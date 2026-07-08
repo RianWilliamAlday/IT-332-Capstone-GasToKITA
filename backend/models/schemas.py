@@ -104,26 +104,18 @@ class SalesFilter(BaseModel):
 class InventoryMetrics(BaseModel):
     fuel_id: int
     fuel_name: str
-    
-    # Current state
     current_stock: float
     tank_capacity: float
     threshold: float
-    
-    # Demand analysis - last 30 days
     avg_daily_usage: float
     usage_std_dev: float
     max_daily_usage: float
     trend: Literal["increasing", "decreasing", "stable"]
-    
-    # Optimization results
     days_remaining: float
     safety_stock: float
     reorder_point: float
     economic_order_qty: float
     max_stock_level: float
-    
-    # Suggestion
     should_reorder: bool
     suggested_reorder_date: date
     suggested_quantity: float

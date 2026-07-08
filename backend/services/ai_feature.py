@@ -8,7 +8,7 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel(
     'gemini-1.5-flash',
     generation_config={
-        "temperature": 0.2, # Low = factual
+        "temperature": 0.2,
         "response_mime_type": "application/json"
     }
 )
@@ -61,7 +61,6 @@ Rules:
         response = model.generate_content(prompt)
         return json.loads(response.text)
     except Exception as e:
-        # Fallback if AI fails
         return {
             "urgency_explanation": f"Stock at {fuel_data['current_stock']}L vs reorder point {fuel_data['reorder_point']}L",
             "demand_insight": f"Trend is {fuel_data['trend']}",

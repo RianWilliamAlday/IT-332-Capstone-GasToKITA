@@ -26,12 +26,8 @@ def create_sale(data: SaleCreate, session: Session = Depends(get_session)):
         raise HTTPException(404, "Pump not found")
     if pump.fuel_id!= data.fuel_id:
         raise HTTPException(400, "Pump fuel type mismatch")
-    
-    # Deduct stock
     fuel.actual_liters -= data.liters_sold
     session.add(fuel)
-    
-    # For now hardcode recorded_by=1, replace with actual cashier from JWT
     recorded_by_id = 1
     cashier = session.get(User, recorded_by_id)
     
@@ -146,7 +142,6 @@ def get_sales_history(
     page_size: int = Query(50, ge=1, le=200),
     session: Session = Depends(get_session)
 ):
-    # Build filters
     filters = []
 
     if start_date:
@@ -162,12 +157,9 @@ def get_sales_history(
     if payment_method:
         filters.append(Sale.payment_method == payment_method)
 
-    # Base query
     query = select(Sale)
     if filters:
         query = query.where(and_(*filters))
-
-    # Get total count + sums before pagination
     count_query = select(func.count()).select_from(Sale)
     total_query = select(
         func.sum(Sale.total_amount),
@@ -180,8 +172,6 @@ def get_sales_history(
 
     total_count = session.exec(count_query).one()
     total_amount, total_liters = session.exec(total_query).one()
-
-    # Paginate
     offset = (page - 1) * page_size
     sales = session.exec(
         query.order_by(Sale.sold_at.desc())
@@ -233,8 +223,6 @@ def export_sales_csv(
         query = query.where(Sale.sold_at <= datetime.combine(end_date, time.max))
 
     sales = session.exec(query.order_by(Sale.sold_at.desc())).all()
-
-    # Create CSV in memory
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
@@ -282,8 +270,6 @@ def void_sale(sale_id: int, session: Session = Depends(get_session)):
     sale = session.get(Sale, sale_id)
     if not sale:
         raise HTTPException(404, "Sale not found")
-
-    # Return stock to tank
     fuel = session.get(Fuel, sale.fuel_id)
     if fuel:
         fuel.actual_liters += sale.liters_sold
