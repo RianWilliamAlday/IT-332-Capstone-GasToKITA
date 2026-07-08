@@ -1,19 +1,54 @@
+import subprocess
+import threading
+import time
 import sys
+import os
 import flet as ft
 from pathlib import Path
 import httpx
+import asyncio
+import socket
+from pages.select import build_dashboard
 
 AUTH = {"token": None, "role": None, "user": None}
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
 else:
-    BASE_DIR = Path(__file__).parent
+    BASE_DIR = Path(_file_).parent
 
 API_URL = "http://127.0.0.1:8000"
 RED = "#A61E22"
 LIGHT_GRAY = "#E9E9E9"
 CARD_GRAY = "#D9D9D9"
+
+def is_backend_running():
+    try:
+        with socket.create_connection(("127.0.0.1", 8000), timeout=1):
+            return True
+    except:
+        return False
+
+def run_backend():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(BASE_DIR)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "backend.main:app",
+         "--host", "127.0.0.1", "--port", "8000"],
+        cwd=BASE_DIR, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+    )
+    for line in proc.stdout:
+        print("[backend]", line.strip())
+
+async def wait_for_backend():
+    for _ in range(20):
+        try:
+            async with httpx.AsyncClient() as c:
+                await c.get(f"{API_URL}/docs", timeout=1)
+                return True
+        except:
+            await asyncio.sleep(0.5)
+    return False
 
 async def main(page: ft.Page):
     page.title = "GasToKITA"
@@ -22,6 +57,13 @@ async def main(page: ft.Page):
     page.padding = 0
     page.window.maximized = True
 
+    loading = ft.Container(expand=True, alignment=ft.Alignment.CENTER,
+        content=ft.Text("Starting backend...", size=18))
+    page.add(loading)
+    page.update()
+    await wait_for_backend()
+    page.controls.clear()
+
     header = ft.Container(bgcolor=RED, height=100, padding=20,
         content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             controls=[
@@ -29,7 +71,7 @@ async def main(page: ft.Page):
                 ft.Row(spacing=15, controls=[
                     ft.Text("U-Fuel", size=28, weight=ft.FontWeight.BOLD, color="white"),
                     ft.Container(width=70, height=70, bgcolor="white", border_radius=12,
-                        content=ft.Image(src="u-fuel_logo.jpg", fit=ft.ImageFit.CONTAIN))
+                        content=ft.Image(src="u-fuel_logo.jpg", fit=ft.BoxFit.CONTAIN))
                 ])
             ]))
 
@@ -44,33 +86,31 @@ async def main(page: ft.Page):
     status_text = ft.Text("", color=RED, size=14)
 
     async def login_employee(e):
-        status_text.value = "Connecting..."
-        page.update()
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            try:
                 resp = await client.post(
                     f"{API_URL}/api/auth/employee/login",
                     json={"email": email_field.value.strip(), "password": password_field.value}
                 )
-            print("RAW:", resp.status_code, resp.text)
-            data = resp.json()
-            token = data.get("access_token") or data.get("token")
-            user = data.get("user", {})
-            
-            if resp.status_code == 200 and token:
+                data = resp.json()
+                token = data.get("access_token") or data.get("token")
+                user = data.get("user", {})
+
+                if not token:
+                    status_text.value = f"No token: {data}"
+                    page.update()
+                    return
+
                 AUTH["token"] = token
                 AUTH["role"] = user.get("role", "EMPLOYEE")
                 AUTH["user"] = user
-                status_text.value = f"Welcome {user.get('name','')}!"
-                page.snack_bar = ft.SnackBar(ft.Text("Login successful"), bgcolor="green")
-                page.snack_bar.open = True
-                # page.go("/dashboard")  # add when your dashboard is ready
-            else:
-                status_text.value = f"Login failed: {data.get('detail','Check credentials')}"
-        except Exception as ex:
-            status_text.value = f"Cannot reach backend: {ex}"
-            print("ERROR:", ex)
-        page.update()
+                page.controls.clear()
+                page.add(build_dashboard(page, AUTH))
+                page.update()
+
+            except Exception as ex:
+                status_text.value = f"Error: {ex}"
+                page.update()
 
     login_btn = ft.FilledButton("Login", width=130, height=45, on_click=login_employee,
         style=ft.ButtonStyle(bgcolor=RED, color="white",
@@ -84,7 +124,6 @@ async def main(page: ft.Page):
                 ft.Text("Pump Attendant Login", size=28, weight=ft.FontWeight.BOLD),
                 ft.Column(spacing=4, controls=[ft.Text("Email:", weight=ft.FontWeight.BOLD), email_field]),
                 ft.Column(spacing=4, controls=[ft.Text("Password:", weight=ft.FontWeight.BOLD), password_field]),
-                ft.Container(height=5),
                 login_btn,
                 status_text,
             ]))
@@ -95,5 +134,8 @@ async def main(page: ft.Page):
         footer
     ]))
 
-if __name__ == "__main__":
+if _name_ == "_main_":
+    if not is_backend_running():
+        threading.Thread(target=run_backend, daemon=True).start()
+        time.sleep(0.5)
     ft.run(main, assets_dir=str(BASE_DIR))
