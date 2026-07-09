@@ -7,7 +7,6 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DB_FILE = PROJECT_ROOT / "gastokita.db"
 engine = create_engine("sqlite:///gastokita.db", echo=False)
-print(f"=== USING DATABASE: {DB_FILE} ===")
 
 class UserRole(str, Enum):
     ADMIN = "ADMIN"

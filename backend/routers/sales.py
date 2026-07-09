@@ -14,7 +14,7 @@ VALID_ATTENDANTS = ["Attendant 1", "Attendant 2", "Attendant 3"]
 def create_sale(
     data: SaleCreate, 
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)   # <-- real employee
+    current_user: User = Depends(get_current_user)
 ):
     if data.attendant_name not in VALID_ATTENDANTS:
         raise HTTPException(400, f"Invalid attendant. Must be one of {VALID_ATTENDANTS}")
@@ -29,17 +29,15 @@ def create_sale(
         raise HTTPException(404, "Fuel type not found")
     if fuel.actual_liters < data.liters_sold:
         raise HTTPException(400, f"Not enough stock. Only {fuel.actual_liters}L left")
-    
-    # deduct stock
+
     fuel.actual_liters -= data.liters_sold
     session.add(fuel)
-    
-    # use the logged-in employee
+
     sale = Sale(
         fuel_id=fuel_id,
         pump_id=data.pump_id,
         attendant_name=data.attendant_name,
-        recorded_by=current_user.id,          # store ID
+        recorded_by=current_user.id,
         liters_sold=data.liters_sold,
         price_per_liter=fuel.price,
         total_amount=data.liters_sold * fuel.price,
@@ -54,7 +52,7 @@ def create_sale(
         fuel_name=fuel.name,
         pump_name=pump.name,
         attendant_name=sale.attendant_name,
-        recorded_by=current_user.name,        # <-- WAS .username
+        recorded_by=current_user.name,
         liters_sold=sale.liters_sold,
         price_per_liter=sale.price_per_liter,
         total_amount=sale.total_amount,
@@ -191,9 +189,9 @@ def get_sales_history(
 
         items.append(SaleHistoryItem(
             id=sale.id,
-            fuel_id=sale.fuel_id,              # <-- was missing
+            fuel_id=sale.fuel_id,
             fuel_name=fuel.name if fuel else "Unknown",
-            pump_id=sale.pump_id,              # <-- was missing
+            pump_id=sale.pump_id,
             pump_name=pump.name if pump else "Unknown",
             attendant_name=sale.attendant_name,
             liters_sold=sale.liters_sold,
@@ -201,7 +199,7 @@ def get_sales_history(
             total_amount=sale.total_amount,
             payment_method=sale.payment_method,
             sold_at=sale.sold_at,
-            recorded_by=cashier.name if cashier else "Unknown"  # <-- use .name not .username
+            recorded_by=cashier.name if cashier else "Unknown"
         ))
 
     return SalesHistoryResponse(

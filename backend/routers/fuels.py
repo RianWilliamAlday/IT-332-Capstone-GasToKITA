@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
-from ..db.database import get_session, Fuel, RestockLog
+from ..db.database import get_session, Fuel, RestockLog, Sale
 from ..models.schemas import FuelTypeResponse, PriceUpdate, RestockRequest, ThresholdUpdate, InventoryMetrics
 from ..services.dipstick import get_closest_dipstick_reading
 from..services.ai_feature import get_ai_reorder_insights
-from datetime import datetime
+from statistics import mean, stdev
+from collections import defaultdict
+from datetime import datetime, date, timedelta
 from typing import List
 import json, os
 
@@ -208,6 +210,103 @@ def sync_from_dipstick(
         "difference": new_liters - old_liters
     }
 
+def get_inventory_optimization(session: Session) -> List[InventoryMetrics]:
+    LEAD_TIME_DAYS = 3
+    Z_SCORE = 1.65
+    ORDERING_COST = 1500.0
+
+    today = date.today()
+    start_dt = datetime.combine(today - timedelta(days=14), datetime.min.time())
+
+    fuels = session.exec(select(Fuel)).all()
+    all_sales = session.exec(
+        select(Sale).where(Sale.sold_at >= start_dt)
+    ).all()
+
+    results: List[InventoryMetrics] = []
+
+    for fuel in fuels:
+        daily = defaultdict(float)
+        for s in all_sales:
+            if s.fuel_id == fuel.id:
+                daily[s.sold_at.date()] += s.liters_sold
+        daily_values = []
+        for i in range(14):
+            d = today - timedelta(days=13 - i)
+            daily_values.append(daily.get(d, 0.0))
+
+        avg_daily = round(mean(daily_values), 2) if daily_values else 0.0
+        std_dev = round(stdev(daily_values), 2) if len(daily_values) > 1 else 0.0
+        max_daily = round(max(daily_values), 2) if daily_values else 0.0
+
+        first_week = mean(daily_values[:7]) if daily_values else 0
+        last_week = mean(daily_values[7:]) if daily_values else 0
+        if last_week > first_week * 1.1:
+            trend = "increasing"
+        elif last_week < first_week * 0.9:
+            trend = "decreasing"
+        else:
+            trend = "stable"
+
+        current_stock = float(fuel.actual_liters)
+        days_remaining = round(current_stock / avg_daily, 1) if avg_daily > 0 else 999.0
+
+        safety_stock = round(Z_SCORE * std_dev * (LEAD_TIME_DAYS ** 0.5), 2)
+        reorder_point = round(avg_daily * LEAD_TIME_DAYS + safety_stock, 2)
+
+        max_stock_level = round(fuel.tank_capacity * 0.9, 2)
+        should_reorder = current_stock <= reorder_point
+
+        suggested_quantity = round(max(0, max_stock_level - current_stock), 2) if should_reorder else 0.0
+
+        annual_demand = avg_daily * 365
+        holding_cost = fuel.price * 0.20
+        if holding_cost > 0 and annual_demand > 0:
+            eoq = (2 * annual_demand * ORDERING_COST / holding_cost) ** 0.5
+            economic_order_qty = round(min(eoq, max_stock_level), 2)
+        else:
+            economic_order_qty = max_stock_level
+        if current_stock <= fuel.threshold or days_remaining < 2:
+            urgency = "critical"
+        elif current_stock <= reorder_point or days_remaining < 5:
+            urgency = "warning"
+        elif current_stock > fuel.tank_capacity * 0.85:
+            urgency = "overstocked"
+        else:
+            urgency = "normal"
+
+        suggested_reorder_date = today if should_reorder else today + timedelta(days=max(0, int(days_remaining - LEAD_TIME_DAYS)))
+        cost_of_order = round(suggested_quantity * fuel.price, 2)
+        days_after = round((current_stock + suggested_quantity) / avg_daily, 1) if avg_daily > 0 else 999.0
+
+        message = f"{fuel.name}: {current_stock:.0f}L left, ~{days_remaining} days at {avg_daily}L/day"
+
+        results.append(InventoryMetrics(
+            fuel_id=fuel.id,
+            fuel_name=fuel.name,
+            current_stock=current_stock,
+            tank_capacity=fuel.tank_capacity,
+            threshold=fuel.threshold,
+            avg_daily_usage=avg_daily,
+            usage_std_dev=std_dev,
+            max_daily_usage=max_daily,
+            trend=trend,
+            days_remaining=days_remaining,
+            safety_stock=safety_stock,
+            reorder_point=reorder_point,
+            economic_order_qty=economic_order_qty,
+            max_stock_level=max_stock_level,
+            should_reorder=should_reorder,
+            suggested_reorder_date=suggested_reorder_date,
+            suggested_quantity=suggested_quantity,
+            urgency=urgency,
+            message=message,
+            cost_of_order=cost_of_order,
+            days_of_supply_after_reorder=days_after
+        ))
+
+    return results
+
 class AIInventoryMetrics(InventoryMetrics):
     ai_urgency_explanation: str
     ai_demand_insight: str
@@ -220,7 +319,7 @@ def get_ai_inventory_optimization(session: Session = Depends(get_session)):
     base_metrics = get_inventory_optimization(session)
     enhanced_results = []
     for metric in base_metrics:
-        fuel_dict = metric.dict()
+        fuel_dict = metric.model_dump()
         if metric.urgency in ["critical", "warning", "overstocked"]:
             ai_data = get_ai_reorder_insights(fuel_dict)
         else:
