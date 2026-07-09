@@ -4,6 +4,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from backend.routers import fuels, pumps, dispense, auth, sales
 from .db.database import create_db_and_tables
+from pathlib import Path
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

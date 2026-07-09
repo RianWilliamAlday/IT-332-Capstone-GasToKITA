@@ -1,24 +1,26 @@
-import google.generativeai as genai
 import os
 import json
-from typing import List, Dict
-from datetime import date, timedelta
+import sys
+import traceback
+from datetime import date
+from pathlib import Path
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel(
-    'gemini-1.5-flash',
-    generation_config={
-        "temperature": 0.2,
-        "response_mime_type": "application/json"
-    }
-)
+BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(BACKEND_ENV)
 
-def get_ai_reorder_insights(fuel_data: Dict) -> Dict:
-    """
-    fuel_data = calculated stats from your existing endpoint
-    AI adds reasoning + recommendations in natural language
-    """
+api_key = os.getenv("GOOGLE_API_KEY")
 
+_client = None
+def _get_client():
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=api_key)
+    return _client
+
+def get_ai_reorder_insights(fuel_data: dict) -> dict:
     prompt = f"""
 You are a fuel inventory advisor for a gas station in the Philippines.
 
@@ -35,12 +37,6 @@ Safety Stock: {fuel_data['safety_stock']}L
 Lead Time: 3 days
 Current Date: {date.today().isoformat()}
 
-CONTEXT:
-- This is a provincial gas station. Demand spikes during harvest season, holidays, and weekends.
-- Overstocking ties up cash. Understocking means lost sales.
-- Typhoon season affects deliveries.
-
-TASK:
 Return JSON with these exact keys:
 {{
   "urgency_explanation": "1-2 sentences why this urgency level. Mention specific numbers.",
@@ -49,18 +45,26 @@ Return JSON with these exact keys:
   "risk_factors": ["list", "of", "2-3 risks"],
   "action_items": ["list", "of", "2-3 concrete steps for manager"]
 }}
-
-Rules:
-- Be concise. No fluff.
-- Use the numbers provided. Do NOT invent new numbers.
-- If overstocked, explain cash impact.
-- If critical, be direct.
 """
-
     try:
-        response = model.generate_content(prompt)
-        return json.loads(response.text)
+        client = _get_client()
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.2,
+                response_mime_type="application/json"
+            )
+        )
+        return json.loads(resp.text)
+
     except Exception as e:
+        print("\n=== GEMINI CALL FAILED ===", file=sys.stderr, flush=True)
+        traceback.print_exc()
+        try:
+            print("Response snippet:", resp.text[:300], file=sys.stderr)
+        except:
+            pass
         return {
             "urgency_explanation": f"Stock at {fuel_data['current_stock']}L vs reorder point {fuel_data['reorder_point']}L",
             "demand_insight": f"Trend is {fuel_data['trend']}",
