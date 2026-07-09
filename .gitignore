@@ -4,3 +4,4 @@ __pycache__
 backend/gastokita.db
 gastokita.db
 .env
+.cursor/

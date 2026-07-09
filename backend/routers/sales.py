@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select,  and_, func
 from..db.database import get_session, Sale, Fuel, User, Pump
 from..models.schemas import SaleCreate, SaleResponse, AttendantSalesSummary, SaleHistoryItem, SalesHistoryResponse
+from ..services.auth import get_current_user 
 from datetime import datetime, date, time
 from typing import List, Optional
 
@@ -10,31 +11,35 @@ router = APIRouter(prefix="/api/sales", tags=["sales"])
 VALID_ATTENDANTS = ["Attendant 1", "Attendant 2", "Attendant 3"]
 
 @router.post("/", response_model=SaleResponse)
-def create_sale(data: SaleCreate, session: Session = Depends(get_session)):
+def create_sale(
+    data: SaleCreate, 
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)   # <-- real employee
+):
     if data.attendant_name not in VALID_ATTENDANTS:
         raise HTTPException(400, f"Invalid attendant. Must be one of {VALID_ATTENDANTS}")
-    
-    fuel = session.get(Fuel, data.fuel_id)
-    if not fuel:
-        raise HTTPException(404, "Fuel type not found")
-    
-    if fuel.actual_liters < data.liters_sold:
-        raise HTTPException(400, f"Not enough stock. Only {fuel.actual_liters}L left")
     
     pump = session.get(Pump, data.pump_id)
     if not pump:
         raise HTTPException(404, "Pump not found")
-    if pump.fuel_id!= data.fuel_id:
-        raise HTTPException(400, "Pump fuel type mismatch")
+
+    fuel_id = pump.fuel_type_id
+    fuel = session.get(Fuel, fuel_id)
+    if not fuel:
+        raise HTTPException(404, "Fuel type not found")
+    if fuel.actual_liters < data.liters_sold:
+        raise HTTPException(400, f"Not enough stock. Only {fuel.actual_liters}L left")
+    
+    # deduct stock
     fuel.actual_liters -= data.liters_sold
     session.add(fuel)
-    recorded_by_id = 1
-    cashier = session.get(User, recorded_by_id)
     
+    # use the logged-in employee
     sale = Sale(
+        fuel_id=fuel_id,
         pump_id=data.pump_id,
         attendant_name=data.attendant_name,
-        recorded_by=recorded_by_id,
+        recorded_by=current_user.id,          # store ID
         liters_sold=data.liters_sold,
         price_per_liter=fuel.price,
         total_amount=data.liters_sold * fuel.price,
@@ -43,13 +48,13 @@ def create_sale(data: SaleCreate, session: Session = Depends(get_session)):
     session.add(sale)
     session.commit()
     session.refresh(sale)
-    
+
     return SaleResponse(
         id=sale.id,
         fuel_name=fuel.name,
         pump_name=pump.name,
         attendant_name=sale.attendant_name,
-        recorded_by=cashier.username,
+        recorded_by=current_user.name,        # <-- WAS .username
         liters_sold=sale.liters_sold,
         price_per_liter=sale.price_per_liter,
         total_amount=sale.total_amount,
@@ -86,7 +91,7 @@ def get_sales_by_attendant(
             fuel_name=fuel.name,
             pump_name=pump.name,
             attendant_name=sale.attendant_name,
-            recorded_by=cashier.username,
+            recorded_by_name = cashier.name if cashier else "Unknown",
             liters_sold=sale.liters_sold,
             price_per_liter=sale.price_per_liter,
             total_amount=sale.total_amount,
@@ -148,13 +153,13 @@ def get_sales_history(
         filters.append(Sale.sold_at >= datetime.combine(start_date, time.min))
     if end_date:
         filters.append(Sale.sold_at <= datetime.combine(end_date, time.max))
-    if fuel_id:
+    if fuel_id is not None:
         filters.append(Sale.fuel_id == fuel_id)
     if attendant_name:
         filters.append(Sale.attendant_name == attendant_name)
-    if pump_id:
+    if pump_id is not None:
         filters.append(Sale.pump_id == pump_id)
-    if payment_method:
+    if payment_method is not None:
         filters.append(Sale.payment_method == payment_method)
 
     query = select(Sale)
@@ -186,15 +191,17 @@ def get_sales_history(
 
         items.append(SaleHistoryItem(
             id=sale.id,
-            sold_at=sale.sold_at,
+            fuel_id=sale.fuel_id,              # <-- was missing
             fuel_name=fuel.name if fuel else "Unknown",
+            pump_id=sale.pump_id,              # <-- was missing
             pump_name=pump.name if pump else "Unknown",
             attendant_name=sale.attendant_name,
             liters_sold=sale.liters_sold,
             price_per_liter=sale.price_per_liter,
             total_amount=sale.total_amount,
             payment_method=sale.payment_method,
-            recorded_by=cashier.username if cashier else "Unknown"
+            sold_at=sale.sold_at,
+            recorded_by=cashier.name if cashier else "Unknown"  # <-- use .name not .username
         ))
 
     return SalesHistoryResponse(
@@ -244,7 +251,7 @@ def export_sales_csv(
             f"{sale.price_per_liter:.2f}",
             f"{sale.total_amount:.2f}",
             sale.payment_method,
-            cashier.username
+            cashier.name if cashier else "Unknown"
         ])
 
     output.seek(0)
@@ -262,6 +269,12 @@ def get_today_history(session: Session = Depends(get_session)):
     return get_sales_history(
         start_date=today,
         end_date=today,
+        fuel_id=None, # <-- add these
+        attendant_name=None,
+        pump_id=None,
+        payment_method=None,
+        page=1,
+        page_size=50,
         session=session
     )
 

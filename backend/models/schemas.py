@@ -46,7 +46,6 @@ class ThresholdUpdate(BaseModel):
     threshold: float
 
 class SaleCreate(BaseModel):
-    fuel_id: int
     pump_id: int
     liters_sold: float
     attendant_name: str
