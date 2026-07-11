@@ -267,7 +267,7 @@ def get_today_history(session: Session = Depends(get_session)):
     return get_sales_history(
         start_date=today,
         end_date=today,
-        fuel_id=None, # <-- add these
+        fuel_id=None,
         attendant_name=None,
         pump_id=None,
         payment_method=None,
