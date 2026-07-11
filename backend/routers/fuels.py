@@ -3,18 +3,14 @@ from sqlmodel import Session, select
 from ..db.database import get_session, Fuel, RestockLog, Sale
 from ..models.schemas import FuelTypeResponse, PriceUpdate, RestockRequest, ThresholdUpdate, InventoryMetrics
 from ..services.dipstick import get_closest_dipstick_reading
-from..services.ai_feature import get_ai_reorder_insights
+from ..services.ai_feature import get_ai_reorder_insights
+from ..db.data import DIPSTICK_DATA
 from statistics import mean, stdev
 from collections import defaultdict
 from datetime import datetime, date, timedelta
 from typing import List
-import json, os
 
 router = APIRouter(prefix="/api/fuels", tags=["fuels"])
-
-_json_path = os.path.join(os.path.dirname(__file__), "..", "measurements.json")
-with open(_json_path, "r") as f:
-    DIPSTICK_DATA = {int(k): int(v) for k, v in json.load(f).items()}
 
 MAX_CM = max(DIPSTICK_DATA.keys())
 

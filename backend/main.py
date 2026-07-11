@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from backend.routers import fuels, pumps, dispense, auth, sales
+from backend.routers import fuels, pumps, dispense, auth, sales, analytics
 from .db.database import create_db_and_tables
 from pathlib import Path
 
@@ -14,7 +14,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Backend",
     description="API for gas station app",
-    version="0.1.0",
+    version="1.6.1",
     lifespan=lifespan
 )
 
@@ -31,3 +31,4 @@ app.include_router(pumps.router)
 app.include_router(dispense.router)
 app.include_router(auth.router)
 app.include_router(sales.router)
+app.include_router(analytics.router)
