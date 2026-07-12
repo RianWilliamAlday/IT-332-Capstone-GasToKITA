@@ -6,3 +6,4 @@ gastokita.db
 backend/.env
 .cursor/
 .vscode/
+dipstick_conversion.py
