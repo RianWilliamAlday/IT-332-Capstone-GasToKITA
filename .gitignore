@@ -6,4 +6,3 @@ gastokita.db
 backend/.env
 .cursor/
 .vscode/
-backend/routers/expenses.py

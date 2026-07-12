@@ -14,7 +14,6 @@ def get_peak_hours(
 ):
     since_date = datetime.now() - timedelta(days=days)
 
-    # Uses your actual columns: sold_at, liters_sold, total_amount
     sql = text("""
         SELECT
             CAST(strftime('%H', sold_at) AS INTEGER) as hour,
@@ -42,10 +41,8 @@ def get_peak_hours(
             "total_revenue": round(d["revenue"], 2),
             "total_liters": round(d["liters"], 2)
         })
-
-    # Find best 3-hour window for staffing recommendation
     max_window, max_count = None, 0
-    for i in range(22): # 0-2, 1-3... 21-23
+    for i in range(22):
         wc = sum(hourly_data[j]["transaction_count"] for j in range(i, i+3))
         if wc > max_count:
             max_count, max_window = wc, f"{i:02d}:00 - {i+3:02d}:00"
@@ -92,8 +89,6 @@ def get_demand_heatmap(days: int = 30, session: Session = Depends(get_session)):
 def get_profit_margins(days: int = 30, session: Session = Depends(get_session)):
     since = datetime.now() - timedelta(days=days)
 
-    # Weighted average cost per fuel from RestockLog
-    # cost is total cost per restock, so cost_per_liter = SUM(cost)/SUM(liters_added)
     sql = text("""
         WITH fuel_costs AS (
             SELECT fuel_id,
