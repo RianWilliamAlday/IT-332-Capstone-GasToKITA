@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from backend.routers import fuels, pumps, dispense, auth, sales, analytics, expenses, oils
+from backend.routers import fuels, inventory, dispense, auth, sales, analytics, expenses, oils
 from .db.database import create_db_and_tables
 from pathlib import Path
 
@@ -27,7 +27,7 @@ app.add_middleware(
 )
 
 app.include_router(fuels.router)
-app.include_router(pumps.router)
+app.include_router(inventory.router)
 app.include_router(dispense.router)
 app.include_router(auth.router)
 app.include_router(sales.router)
