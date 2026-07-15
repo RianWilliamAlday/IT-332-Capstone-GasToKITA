@@ -7,4 +7,6 @@ backend/.env
 .cursor/
 .vscode/
 dipstick_conversion.py
-ff.py
+analytics.py
+inventory.py
+history.py

@@ -121,7 +121,7 @@ async def main(page: ft.Page):
         border=ft.Border.all(2, ft.Colors.BLACK), border_radius=25, padding=20,
         content=ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15,
             controls=[
-                ft.Text("Pump Attendant Login", size=28, weight=ft.FontWeight.BOLD),
+                ft.Text("Login", size=28, weight=ft.FontWeight.BOLD),
                 ft.Column(spacing=4, controls=[ft.Text("Email:", weight=ft.FontWeight.BOLD), email_field]),
                 ft.Column(spacing=4, controls=[ft.Text("Password:", weight=ft.FontWeight.BOLD), password_field]),
                 login_btn,
