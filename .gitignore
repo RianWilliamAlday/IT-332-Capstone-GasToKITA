@@ -6,7 +6,4 @@ gastokita.db
 backend/.env
 .cursor/
 .vscode/
-dipstick_conversion.py
-analytics.py
-inventory.py
-history.py
+pages/optimization.py
