@@ -96,3 +96,62 @@ def restock_oil(auth: dict, oil_id: int, quantity: int, total_cost: float, suppl
         except: detail = r.text
         raise Exception(detail)
     return r.json()
+
+def get_peak_hours(auth: dict, days: int = 30, product_type: str = "all", fuel_id=None, oil_id=None):
+    params = {"days": days, "product_type": product_type}
+    if fuel_id: params["fuel_id"] = fuel_id
+    if oil_id: params["oil_id"] = oil_id
+    r = requests.get(f"{BASE_URL}/analytics/peak-hours", params=params, headers=_headers(auth), timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def get_heatmap(auth: dict, days: int = 30, product_type: str = "fuel"):
+    r = requests.get(f"{BASE_URL}/analytics/heatmap", params={"days": days, "product_type": product_type}, headers=_headers(auth), timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def get_fuel_profit_margins(auth: dict, days: int = 30):
+    r = requests.get(f"{BASE_URL}/analytics/profit-margins/fuel", params={"days": days}, headers=_headers(auth), timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def get_oil_profit_margins(auth: dict, days: int = 30):
+    r = requests.get(f"{BASE_URL}/analytics/profit-margins/oil", params={"days": days}, headers=_headers(auth), timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def get_unified_profit_margins(auth: dict, days: int = 30):
+    r = requests.get(f"{BASE_URL}/analytics/profit-margins/unified", params={"days": days}, headers=_headers(auth), timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def get_revenue_summary(auth: dict, days: int = 30):
+    r = requests.get(f"{BASE_URL}/analytics/revenue/summary", params={"days": days}, headers=_headers(auth), timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def get_top_oils(auth: dict, days: int = 30, limit: int = 5):
+    r = requests.get(f"{BASE_URL}/analytics/oil/top-selling", params={"days": days, "limit": limit}, headers=_headers(auth), timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def get_unified_history(auth: dict, product_type=None, attendant_name=None, start_date=None, end_date=None, page=1, page_size=100):
+    params = {"page": page, "page_size": page_size}
+    if product_type and product_type != "all": params["product_type"] = product_type
+    if attendant_name and attendant_name != "all": params["attendant_name"] = attendant_name
+    if start_date: params["start_date"] = start_date
+    if end_date: params["end_date"] = end_date
+    r = requests.get(f"{BASE_URL}/api/sales/history", params=params, headers=_headers(auth), timeout=8)
+    r.raise_for_status()
+    return r.json()
+
+def update_oil(auth: dict, oil_id: int, payload: dict):
+    url = f"{BASE_URL}/oils/{oil_id}" 
+    headers = {
+        "Authorization": f"Bearer {auth.get('token', '')}",
+        "Content-Type": "application/json"
+    }
+    response = requests.put(url, json=payload, headers=headers)
+    if response.status_code != 200:
+        raise Exception(f"Server error ({response.status_code}): {response.text}")
+    return response.json()
