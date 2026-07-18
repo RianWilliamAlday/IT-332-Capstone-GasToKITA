@@ -1,13 +1,23 @@
 import flet as ft
-from pages.select_oil import build_oil_page
-from pages.select_gas import build_pump_page
+from pages.select import select_transaction
 
 RED = "#A61E22"
 LIGHT_GRAY = "#E9E9E9"
 
-def select_transaction(page: ft.Page, auth: dict):
-    page.title = "Transaction Selection"
+def pa_selection(page: ft.Page, auth: dict):
+    page.title = "Select Pump Attendant"
     page.bgcolor = LIGHT_GRAY
+
+    def select_attendant(name: str):
+        auth["selected_attendant"] = name
+        print(f"Selected {name} by:", auth.get("user"))
+        page.controls.clear()
+        page.add(select_transaction(page, auth))
+        page.update()
+
+    def on_1(e): select_attendant("Attendant 1")
+    def on_2(e): select_attendant("Attendant 2")
+    def on_3(e): select_attendant("Attendant 3")
 
     header = ft.Container(
         bgcolor=RED, height=100, padding=20,
@@ -25,18 +35,6 @@ def select_transaction(page: ft.Page, auth: dict):
 
     footer = ft.Container(height=80, bgcolor=RED)
 
-    def on_pump(e):
-        print("Pump Gas clicked by:", auth.get("user"), "Attendant:", auth.get("selected_attendant"))
-        page.controls.clear()
-        page.add(build_pump_page(page, auth))
-        page.update()
-
-    def on_oils(e):
-        print("Oils clicked by:", auth.get("user"), "Attendant:", auth.get("selected_attendant"))
-        page.controls.clear()
-        page.add(build_oil_page(page, auth))
-        page.update()
-
     def card(title, handler):
         return ft.Container(
             width=240, height=240, bgcolor=RED, border_radius=25, padding=15,
@@ -52,7 +50,7 @@ def select_transaction(page: ft.Page, auth: dict):
         expand=True, bgcolor="white", alignment=ft.Alignment(0,0),
         content=ft.Row(
             alignment=ft.MainAxisAlignment.CENTER, spacing=50,
-            controls=[card("Pump Gas", on_pump), card("Oils", on_oils)]
+            controls=[card("Attendant 1", on_1), card("Attendant 2", on_2), card("Attendant 3", on_3)]
         ))
 
     return ft.Column(spacing=0, expand=True, controls=[header, body, footer])
