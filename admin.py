@@ -8,6 +8,8 @@ from pathlib import Path
 import httpx
 import asyncio
 import socket
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".env")
 
 AUTH = {"token": None, "name": None}
 
