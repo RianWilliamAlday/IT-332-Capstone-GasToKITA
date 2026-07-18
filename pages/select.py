@@ -1,4 +1,6 @@
 import flet as ft
+from pages.select_oil import build_oil_page
+from pages.select_gas import build_pump_page
 
 RED = "#A61E22"
 LIGHT_GRAY = "#E9E9E9"
@@ -24,11 +26,16 @@ def select_transaction(page: ft.Page, auth: dict):
     footer = ft.Container(height=80, bgcolor=RED)
 
     def on_pump(e):
-        print("Pump Gas clicked by:", auth.get("user"))
-
+        print("Pump Gas clicked by:", auth.get("user"), "Attendant:", auth.get("selected_attendant"))
+        page.controls.clear()
+        page.add(build_pump_page(page, auth))
+        page.update()
 
     def on_oils(e):
-        print("Oils clicked by:", auth.get("user"))
+        print("Oils clicked by:", auth.get("user"), "Attendant:", auth.get("selected_attendant"))
+        page.controls.clear()
+        page.add(build_oil_page(page, auth))
+        page.update()
 
     def card(title, handler):
         return ft.Container(
