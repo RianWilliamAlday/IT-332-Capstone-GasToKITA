@@ -155,3 +155,21 @@ def update_oil(auth: dict, oil_id: int, payload: dict):
     if response.status_code != 200:
         raise Exception(f"Server error ({response.status_code}): {response.text}")
     return response.json()
+
+def _headers(auth: dict):
+    token = auth.get("access_token") or auth.get("token")
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+def get_attendant_rankings(auth, days=30, product_type="all", sort_by="revenue", limit=10, include_breakdown=False):
+    r = requests.get(f"{BASE_URL}/analytics/attendants/ranking", params={
+        "days": days, "product_type": product_type, "sort_by": sort_by, "limit": limit, "include_breakdown": include_breakdown
+    }, headers=_headers(auth), timeout=10)
+    r.raise_for_status(); return r.json()
+
+def get_attendant_leaderboard(auth, days=7):
+    r = requests.get(f"{BASE_URL}/analytics/attendants/leaderboard", params={"days": days}, headers=_headers(auth), timeout=10)
+    r.raise_for_status(); return r.json()
+
+def get_attendant_performance(auth, attendant_name, days=30):
+    r = requests.get(f"{BASE_URL}/analytics/attendants/{attendant_name}/performance", params={"days": days}, headers=_headers(auth), timeout=10)
+    r.raise_for_status(); return r.json()
