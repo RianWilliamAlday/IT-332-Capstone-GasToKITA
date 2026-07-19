@@ -11,14 +11,16 @@ try:
     from api_client import (
         get_peak_hours, get_heatmap, get_fuel_profit_margins,
         get_oil_profit_margins, get_unified_profit_margins,
-        get_revenue_summary, get_top_oils
+        get_revenue_summary, get_top_oils, get_attendant_rankings,
+        get_attendant_performance, get_attendant_leaderboard
     )
 except ImportError:
     try:
         from .api_client import (
             get_peak_hours, get_heatmap, get_fuel_profit_margins,
             get_oil_profit_margins, get_unified_profit_margins,
-            get_revenue_summary, get_top_oils
+            get_revenue_summary, get_top_oils, get_attendant_leaderboard,
+            get_attendant_performance, get_attendant_rankings
         )
     except:
         import requests
@@ -48,10 +50,13 @@ except ImportError:
             r.raise_for_status(); return r.json()
 
 def analytics_page(page: ft.Page, auth: dict):
-    page.title = "Analytics Dashboard"
+    page.title = "Analytics & Performance Dashboard"
     page.bgcolor = "#F5F5F5"
     page.padding = 0
     page.theme = ft.Theme(color_scheme_seed=DARK_RED)
+
+    # State variables for detailed view selection
+    selected_attendant = {"name": None}
 
     days_dropdown = ft.Dropdown(
         label="Period", value="30", filled=True, fill_color="white",
@@ -72,6 +77,20 @@ def analytics_page(page: ft.Page, auth: dict):
             ft.dropdown.Option("all", "All"),
             ft.dropdown.Option("fuel", "Fuel only"),
             ft.dropdown.Option("oil", "Oil only"),
+        ]
+    )
+    
+    # New Attendant Leaderboard Sort Dropdown
+    attendant_sort_dropdown = ft.Dropdown(
+        label="Sort Attendants By", value="revenue", filled=True, fill_color="white",
+        border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED,
+        width=180,
+        options=[
+            ft.dropdown.Option("revenue", "Revenue"),
+            ft.dropdown.Option("liters", "Liters Sold"),
+            ft.dropdown.Option("transactions", "Transactions"),
+            ft.dropdown.Option("oil_pcs", "Oil Pieces"),
+            ft.dropdown.Option("avg_ticket", "Avg Ticket Size"),
         ]
     )
 
@@ -145,6 +164,48 @@ def analytics_page(page: ft.Page, auth: dict):
         bgcolor="white", border_radius=8, padding=ft.Padding.all(16),
         shadow=ft.BoxShadow(blur_radius=4, color="#00000015", offset=ft.Offset(0, 2)),
         expand=False
+    )
+
+    podium_container = ft.Row(spacing=20, alignment=ft.MainAxisAlignment.CENTER)
+    
+    ranking_table = ft.DataTable(
+        columns=[
+            ft.DataColumn(ft.Text("Rank")),
+            ft.DataColumn(ft.Text("Attendant")),
+            ft.DataColumn(ft.Text("Total Revenue")),
+            ft.DataColumn(ft.Text("Transactions")),
+            ft.DataColumn(ft.Text("Liters Sold")),
+            ft.DataColumn(ft.Text("Oil Qty")),
+            ft.DataColumn(ft.Text("Avg Ticket")),
+            ft.DataColumn(ft.Text("Action")),
+        ],
+        rows=[]
+    )
+    
+    leaderboard_container = ft.Container(
+        content=ft.Column(controls=[
+            ft.Row([
+                ft.Text("Attendant Sales Leaderboard", size=15, weight=ft.FontWeight.BOLD, color="#222"),
+                attendant_sort_dropdown
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            ft.Container(height=10),
+            ft.Text("🏆 Quick Dashboard Podium (Top 3 by Revenue)", size=12, color="#555", weight=ft.FontWeight.W_600),
+            podium_container,
+            ft.Divider(color="#EEEEEE"),
+            ft.Container(
+                content=ft.Column([ranking_table], scroll=ft.ScrollMode.ADAPTIVE),
+                clip_behavior=ft.ClipBehavior.HARD_EDGE
+            )
+        ]),
+        bgcolor="white", border_radius=8, padding=ft.Padding.all(20),
+        shadow=ft.BoxShadow(blur_radius=4, color="#00000015", offset=ft.Offset(0, 2))
+    )
+
+    detailed_perf_container = ft.Container(
+        content=ft.Text("Select an attendant from the leaderboard above to view deep performance analytics.", color="#777", size=12),
+        bgcolor="white", border_radius=8, padding=ft.Padding.all(20),
+        shadow=ft.BoxShadow(blur_radius=4, color="#00000015", offset=ft.Offset(0, 2)),
+        visible=False
     )
 
     insight_text = ft.Text("Loading insights...", size=12, color="#333")
@@ -301,6 +362,60 @@ def analytics_page(page: ft.Page, auth: dict):
 
         return ft.Column(controls=rows + [ft.Container(height=8), legend], spacing=2)
 
+    def view_individual_performance(name):
+        selected_attendant["name"] = name
+        detailed_perf_container.visible = True
+        detailed_perf_container.content = ft.Row([ft.ProgressRing(width=20, height=20), ft.Text(f" Fetching profile metrics for {name}...")])
+        page.update()
+        
+        try:
+            days = int(days_dropdown.value)
+            perf = get_attendant_performance(auth, attendant_name=name, days=days)
+            summary = perf.get("summary", {})
+            
+            # Sub-charts or metrics for individual attendant
+            f_mix = perf.get("fuel_mix", [])
+            fuel_mix_text = ", ".join([f"{f['fuel_name']}: {f['liters']}L" for f in f_mix]) if f_mix else "No fuel mix logs"
+            
+            detailed_perf_container.content = ft.Column(controls=[
+                ft.Row([
+                    ft.Text(f"📊 Detailed Card: {perf.get('attendant_name')}", size=14, weight=ft.FontWeight.BOLD, color=DARK_RED),
+                    ft.IconButton(ft.Icons.CLOSE, icon_size=16, on_click=lambda _: hide_perf_view())
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Text(perf.get("insight", ""), italic=True, size=12, color="#555"),
+                ft.Container(height=6),
+                ft.Row(controls=[
+                    make_summary_card("Attendant Revenue", ft.Text(f"₱{summary.get('total_revenue', 0):,.2f}", size=14, color=DARK_RED, weight=ft.FontWeight.BOLD), ft.Icons.MONETIZATION_ON, DARK_RED),
+                    make_summary_card("Total Txns", ft.Text(str(summary.get('total_transactions', 0)), size=14, weight=ft.FontWeight.BOLD), ft.Icons.RECEIPT_LONG, "#666"),
+                    make_summary_card("Fuel Efficiency", ft.Text(f"{summary.get('fuel', {}).get('liters', 0):,.1f} L", size=14, color="#1565C0", weight=ft.FontWeight.BOLD), ft.Icons.LOCAL_GAS_STATION, "#1565C0"),
+                    make_summary_card("Oil Sold", ft.Text(f"{summary.get('oil', {}).get('quantity', 0)} pcs", size=14, color="#2E7D32", weight=ft.FontWeight.BOLD), ft.Icons.OPACITY, "#2E7D32"),
+                ], wrap=True, spacing=10),
+                ft.Container(height=6),
+                ft.Text(f"Fuel Product Mix: {fuel_mix_text}", size=11, color="#444", weight=ft.FontWeight.W_500)
+            ], spacing=6)
+        except Exception as e:
+            detailed_perf_container.content = ft.Text(f"Error loading attendant profile: {e}", color="red")
+        page.update()
+
+    def hide_perf_view():
+        detailed_perf_container.visible = False
+        selected_attendant["name"] = None
+        page.update()
+
+    def make_podium_card(rank_idx, name, subtitle, value_str):
+        colors = {1: "#FFD700", 2: "#C0C0C0", 3: "#CD7F32"}
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        return ft.Container(
+            content=ft.Column([
+                ft.Text(medals.get(rank_idx, ""), size=22, text_align=ft.TextAlign.CENTER),
+                ft.Text(name if name else "Empty Slot", size=12, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER, max_lines=1),
+                ft.Text(value_str, size=11, color=DARK_RED, weight=ft.FontWeight.BOLD),
+                ft.Text(subtitle, size=9, color="#777")
+            ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, tight=True),
+            width=130, height=120, bgcolor="#F9F9F9", border_radius=8, border=ft.Border.all(1.5, colors.get(rank_idx, "#DDD")),
+            padding=8
+        )
+
     def load_data():
         def bg():
             time.sleep(0.05)
@@ -309,6 +424,7 @@ def analytics_page(page: ft.Page, auth: dict):
             except:
                 days = 30
             prod = product_dropdown.value
+            attendant_sort = attendant_sort_dropdown.value
 
             def safe_ui_refresh():
                 try: page.update()
@@ -390,10 +506,56 @@ def analytics_page(page: ft.Page, auth: dict):
             except Exception as e:
                 print(f"[analytics] Heatmap render matrix collapse: {e}")
 
+            try:
+                lb = get_attendant_leaderboard(auth, days=7 if days <= 7 else 30)
+                podium = lb.get("podium", [])
+                podium_container.controls.clear()
+
+                t1 = lb.get("top_1") or (podium[0] if len(podium) > 0 else None)
+                t2 = lb.get("top_2") or (podium[1] if len(podium) > 1 else None)
+                t3 = lb.get("top_3") or (podium[2] if len(podium) > 2 else None)
+                
+                podium_container.controls.append(make_podium_card(2, t2.get("attendant_name") if t2 else None, "2nd Place", f"₱{t2.get('total_revenue',0):,.0f}" if t2 else "₱0"))
+                podium_container.controls.append(make_podium_card(1, t1.get("attendant_name") if t1 else None, "Top Performer", f"₱{t1.get('total_revenue',0):,.0f}" if t1 else "₱0"))
+                podium_container.controls.append(make_podium_card(3, t3.get("attendant_name") if t3 else None, "3rd Place", f"₱{t3.get('total_revenue',0):,.0f}" if t3 else "₱0"))
+
+                rank_data = get_attendant_rankings(auth, days=days, product_type=prod, sort_by=attendant_sort, limit=15, include_breakdown=False)
+                rankings = rank_data.get("rankings", [])
+                
+                ranking_table.rows.clear()
+                for r in rankings:
+                    name_str = r.get("attendant_name", "")
+                    medal = r.get("medal") or ""
+                    
+                    ranking_table.rows.append(
+                        ft.DataRow(
+                            cells=[
+                                ft.DataCell(ft.Text(f"{r.get('rank')} {medal}")),
+                                ft.DataCell(ft.Text(name_str, weight=ft.FontWeight.BOLD)),
+                                ft.DataCell(ft.Text(f"₱{r.get('total_revenue', 0):,.2f}")),
+                                ft.DataCell(ft.Text(str(r.get('transaction_count', 0)))),
+                                ft.DataCell(ft.Text(f"{r.get('total_liters', 0):,.1f} L")),
+                                ft.DataCell(ft.Text(str(r.get('total_oil_pcs', 0)))),
+                                ft.DataCell(ft.Text(f"₱{r.get('avg_ticket', 0):,.2f}")),
+                                ft.DataCell(
+                                    ft.TextButton("Inspect Profile", on_click=lambda e, name=name_str: view_individual_performance(name))
+                                ),
+                            ]
+                        )
+                    )
+
+                if selected_attendant["name"]:
+                    view_individual_performance(selected_attendant["name"])
+                    
+                safe_ui_refresh()
+            except Exception as e:
+                print(f"[analytics] Error assembling attendant leaderboard matrix views: {e}")
+
         page.run_thread(bg)
 
     days_dropdown.on_change = lambda e: load_data()
     product_dropdown.on_change = lambda e: load_data()
+    attendant_sort_dropdown.on_change = lambda e: load_data()
 
     def go_dashboard(e):
         from pages.admin_dashboard import dashboard_page
@@ -462,6 +624,9 @@ def analytics_page(page: ft.Page, auth: dict):
             summary_row,
             ft.Container(height=8),
             filters_section,
+            ft.Container(height=8),
+            leaderboard_container,
+            detailed_perf_container,
             ft.Container(height=8),
             charts_top,
             ft.Container(height=8),
