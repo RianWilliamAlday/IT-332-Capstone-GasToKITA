@@ -1,8 +1,10 @@
 import subprocess, threading, time, sys, os, socket
 from pathlib import Path
-import flet as ft
-import httpx, asyncio
+import httpx
+import asyncio
+import socket
 from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".env")
 
 load_dotenv(Path(_file_).parent / ".env")
 
