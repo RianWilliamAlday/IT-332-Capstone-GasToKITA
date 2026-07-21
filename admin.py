@@ -1,10 +1,8 @@
 import subprocess, threading, time, sys, os, socket
 from pathlib import Path
-import httpx
-import asyncio
-import socket
+import flet as ft
+import httpx, asyncio
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent / ".env")
 
 load_dotenv(Path(_file_).parent / ".env")
 
@@ -182,4 +180,3 @@ if _name_ == "_main_":
         threading.Thread(target=run_backend, daemon=True).start()
         time.sleep(0.5)
     ft.run(main, assets_dir=str(BASE_DIR))
-127.0.0.1
