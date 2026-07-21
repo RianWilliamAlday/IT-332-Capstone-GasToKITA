@@ -15,12 +15,11 @@ AUTH = {"token": None, "role": None, "user": None}
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
 else:
-    BASE_DIR = Path(__file__).parent
+    BASE_DIR = Path(_file_).parent
 
 API_URL = "http://127.0.0.1:8000"
 RED = "#A61E22"
 LIGHT_GRAY = "#E9E9E9"
-CARD_GRAY = "#D9D9D9"
 
 def is_backend_running():
     try:
@@ -53,7 +52,6 @@ async def wait_for_backend():
 async def main(page: ft.Page):
     page.title = "GasToKITA"
     page.theme_mode = ft.ThemeMode.LIGHT
-    page.bgcolor = LIGHT_GRAY
     page.padding = 0
     page.window.maximized = True
 
@@ -83,7 +81,7 @@ async def main(page: ft.Page):
         can_reveal_password=True, border_radius=25, border_color="black", bgcolor="white",
         width=330, height=50)
 
-    status_text = ft.Text("", color=RED, size=14)
+    status_text = ft.Text("", color="white", size=14)
 
     async def login_employee(e):
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -117,24 +115,54 @@ async def main(page: ft.Page):
             shape=ft.RoundedRectangleBorder(radius=25),
             text_style=ft.TextStyle(size=20, weight=ft.FontWeight.BOLD)))
 
-    login_card = ft.Container(width=460, height=400, bgcolor=CARD_GRAY,
-        border=ft.Border.all(2, ft.Colors.BLACK), border_radius=25, padding=20,
-        content=ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15,
+    login_card = ft.Container(
+        width=460,
+        height=420,
+        border_radius=25,
+        padding=20,
+        bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
+        border=ft.Border.all(1.2, ft.Colors.with_opacity(0.3, ft.Colors.WHITE)),
+        blur=ft.Blur(5, 5, ft.BlurTileMode.MIRROR),
+        shadow=ft.BoxShadow(blur_radius=20, color=ft.Colors.with_opacity(0.25, ft.Colors.BLACK)),
+        content=ft.Column(
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=15,
             controls=[
-                ft.Text("Login", size=28, weight=ft.FontWeight.BOLD),
-                ft.Column(spacing=4, controls=[ft.Text("Email:", weight=ft.FontWeight.BOLD), email_field]),
-                ft.Column(spacing=4, controls=[ft.Text("Password:", weight=ft.FontWeight.BOLD), password_field]),
+                ft.Text("Login", size=28, weight=ft.FontWeight.BOLD, color="white"),
+                ft.Column(spacing=4, controls=[ft.Text("Email:", weight=ft.FontWeight.BOLD, color="white"), email_field]),
+                ft.Column(spacing=4, controls=[ft.Text("Password:", weight=ft.FontWeight.BOLD, color="white"), password_field]),
                 login_btn,
                 status_text,
-            ]))
+            ]
+        )
+    )
 
-    page.add(ft.Column(spacing=0, expand=True, controls=[
+    page_content = ft.Column(spacing=0, expand=True, controls=[
         header,
         ft.Container(expand=True, alignment=ft.Alignment.CENTER, content=login_card),
         footer
-    ]))
+    ])
 
-if __name__ == "__main__":
+    page.add(
+        ft.Stack(
+            expand=True,
+            fit=ft.StackFit.EXPAND,
+            controls=[
+                ft.Container(
+                    expand=True,
+                    image=ft.DecorationImage(src="background.jpg", fit=ft.BoxFit.COVER)
+                ),
+                ft.Container(
+                    expand=True,
+                    bgcolor=ft.Colors.with_opacity(0.30, ft.Colors.BLACK)
+                ),
+                page_content
+            ]
+        )
+    )
+    page.update()
+
+if _name_ == "_main_":
     if not is_backend_running():
         threading.Thread(target=run_backend, daemon=True).start()
         time.sleep(0.5)
