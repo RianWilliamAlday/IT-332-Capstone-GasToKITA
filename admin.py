@@ -4,12 +4,12 @@ import flet as ft
 import httpx, asyncio
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent / ".env")
+load_dotenv(Path(_file_).parent / ".env")
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
 else:
-    BASE_DIR = Path(__file__).parent
+    BASE_DIR = Path(_file_).parent
 
 API_URL = "http://127.0.0.1:8000"
 RED = "#A61E22"
@@ -68,7 +68,6 @@ def build_login_view(page: ft.Page, auth: dict):
                 auth["token"] = data.get("access_token")
                 auth["access_token"] = data.get("access_token")
                 auth["name"] = data.get("name", "Admin")
-                # --- NAVIGATE TO DASHBOARD (NOT INVENTORY) ---
                 from pages.admin_dashboard import dashboard_page
                 page.controls.clear()
                 page.add(dashboard_page(page, auth))
@@ -90,13 +89,28 @@ def build_login_view(page: ft.Page, auth: dict):
     )
 
     login_card = ft.Container(
-        width=460, height=340, bgcolor=CARD_GRAY, border=ft.Border.all(2, ft.Colors.BLACK), border_radius=25, padding=20,
-        content=ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=18, controls=[
-            ft.Text("Admin Login", size=32, weight=ft.FontWeight.BOLD),
-            ft.Text("Please enter your password", size=14, text_align=ft.TextAlign.CENTER),
-            ft.Column(spacing=8, controls=[ft.Text("Password:", weight=ft.FontWeight.BOLD), password_field]),
-            login_btn, status_text,
-        ]),
+        width=460,
+        height=360,
+        border_radius=25,
+        padding=25,
+        bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
+        border=ft.Border.all(1.2, ft.Colors.with_opacity(0.3, ft.Colors.WHITE)),
+        blur=ft.Blur(5, 5, ft.BlurTileMode.MIRROR),
+        shadow=ft.BoxShadow(blur_radius=20, color=ft.Colors.with_opacity(0.2, ft.Colors.BLACK)),
+        content=ft.Column(
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER, 
+            spacing=18, 
+            controls=[
+                ft.Text("Admin Login", size=32, weight=ft.FontWeight.BOLD, color="white"),
+                ft.Text("Please enter your password", size=14, text_align=ft.TextAlign.CENTER, color=ft.Colors.with_opacity(0.8, "white")),
+                ft.Column(spacing=8, controls=[
+                    ft.Text("Password:", weight=ft.FontWeight.BOLD, color="white"), 
+                    password_field
+                ]),
+                login_btn, 
+                status_text,
+            ]
+        ),
     )
 
     header = ft.Container(
@@ -111,13 +125,34 @@ def build_login_view(page: ft.Page, auth: dict):
     )
 
     footer = ft.Container(
-        content=ft.Row([
-            ft.Text("GAStoKITA", color=WHITE, size=12),
-        ], alignment=ft.MainAxisAlignment.CENTER),
+        content=ft.Row([ft.Text("GAStoKITA", color=WHITE, size=12)], alignment=ft.MainAxisAlignment.CENTER),
         bgcolor=DARK_RED, padding=ft.Padding.symmetric(vertical=14, horizontal=24),
     )
 
-    return ft.Column(spacing=0, expand=True, controls=[header, ft.Container(expand=True, alignment=ft.Alignment.CENTER, content=login_card), footer])
+    page_content = ft.Column(spacing=0, expand=True, controls=[
+        header,
+        ft.Container(expand=True, alignment=ft.Alignment.CENTER, content=login_card),
+        footer
+    ])
+
+    return ft.Stack(
+        expand=True,
+        fit=ft.StackFit.EXPAND,
+        controls=[
+            ft.Container(
+                expand=True,
+                image=ft.DecorationImage(
+                    src="background.jpg",
+                    fit=ft.BoxFit.COVER,
+                )
+            ),
+            ft.Container(
+                expand=True,
+                bgcolor=ft.Colors.with_opacity(0.30, ft.Colors.BLACK)
+            ),
+            page_content
+        ]
+    )
 
 async def main(page: ft.Page):
     page.title = "GasToKITA - Admin"
@@ -140,7 +175,7 @@ async def main(page: ft.Page):
     page.add(build_login_view(page, AUTH))
     page.update()
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     if not is_backend_running():
         threading.Thread(target=run_backend, daemon=True).start()
         time.sleep(0.5)
