@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from ..db.database import get_session, User, UserRole
 import os
 
-SECRET_KEY = os.getenv("JWT_SECRET", "change-this-in-prod-please")
+SECRET_KEY = os.getenv("JWT_SECRET", "BACKUP_SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 

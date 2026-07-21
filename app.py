@@ -15,7 +15,7 @@ AUTH = {"token": None, "role": None, "user": None}
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
 else:
-    BASE_DIR = Path(_file_).parent
+    BASE_DIR = Path(__file__).parent
 
 API_URL = "http://127.0.0.1:8000"
 RED = "#A61E22"
@@ -162,9 +162,9 @@ async def main(page: ft.Page):
     )
     page.update()
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     if not is_backend_running():
+        
         threading.Thread(target=run_backend, daemon=True).start()
         time.sleep(0.5)
     ft.run(main, assets_dir=str(BASE_DIR))
-127.0.0.1
