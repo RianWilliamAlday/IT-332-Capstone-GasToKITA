@@ -11,9 +11,9 @@ def build_change_page(page: ft.Page, auth: dict, transaction: dict = None, paid:
     page.padding = 0
 
     def on_done(e):
-        from pages.select import select_transaction
+        from pages.select_pa import pa_selection
         page.clean()
-        page.add(select_transaction(page, auth))
+        page.add(pa_selection(page, auth))
         page.update()
 
     header = ft.Container(
