@@ -106,7 +106,7 @@ async def main(page: ft.Page):
     page.add(ft.Stack(expand=True, fit=ft.StackFit.EXPAND, controls=[ft.Container(expand=True, image=ft.DecorationImage(src="background.jpg", fit=ft.BoxFit.COVER)), ft.Container(expand=True, bgcolor=ft.Colors.with_opacity(0.30, ft.Colors.BLACK)), page_content]))
     page.update()
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     if not is_backend_running():
         threading.Thread(target=run_backend, daemon=True).start()
         time.sleep(0.5)
