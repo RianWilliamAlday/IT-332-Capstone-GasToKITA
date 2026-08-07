@@ -1,18 +1,46 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select, and_, func
-from ..db.database import get_session, Sale, Fuel, User, Pump, OilProduct, OilSale
+from ..db.database import get_session, Sale, Fuel, User, Pump, OilProduct, OilSale, FuelBatch, FuelSaleBatch
 from ..models.schemas import (
     SaleCreate, SaleResponse, SaleHistoryItem, SalesHistoryResponse,
     OilSaleCreate, OilSaleResponse, OilSaleHistoryItem, OilSalesHistoryResponse,
-    UnifiedSaleItem, UnifiedHistoryResponse, ProductType
+    UnifiedSaleItem, UnifiedHistoryResponse, ProductType,
+    FifoSaleDetail
 )
 from ..services.auth import get_current_user
 from datetime import datetime, date, time
 from typing import List, Optional
 
-router = APIRouter(prefix="/api/sales", tags=["sales"])
+router = APIRouter(prefix="/api/sales", tags=["Centralized Sales"])
 
 VALID_ATTENDANTS = ["Attendant 1", "Attendant 2", "Attendant 3"]
+
+def get_fifo_batches(session: Session, fuel_id: int):
+    return session.exec(select(FuelBatch).where(FuelBatch.fuel_id == fuel_id, FuelBatch.liters_remaining > 0).order_by(FuelBatch.restocked_at.asc(), FuelBatch.id.asc())).all()
+
+def ensure_initial_batch(session: Session, fuel: Fuel):
+    existing = session.exec(select(FuelBatch).where(FuelBatch.fuel_id == fuel.id)).first()
+    if not existing and fuel.actual_liters > 0:
+        batch = FuelBatch(
+            fuel_id=fuel.id,
+            liters_initial=fuel.actual_liters,
+            liters_remaining=fuel.actual_liters,
+            cost_per_liter=fuel.price * 0.8,
+            selling_price=fuel.price,
+            supplier="Initial Stock",
+            restocked_by="system",
+            restocked_at=fuel.last_restocked or datetime.now()
+        )
+        session.add(batch)
+        session.commit()
+        return batch
+    return existing
+
+def get_current_fifo_price(session: Session, fuel_id: int, fuel_fallback: Fuel = None):
+    batches = get_fifo_batches(session, fuel_id)
+    if batches:
+        return batches[0].selling_price
+    return fuel_fallback.price if fuel_fallback else 0.0
 
 @router.post("/fuel", response_model=SaleResponse)
 def create_fuel_sale(
@@ -28,23 +56,84 @@ def create_fuel_sale(
     fuel = session.get(Fuel, pump.fuel_type_id)
     if not fuel:
         raise HTTPException(404, "Fuel type not found")
-    if fuel.actual_liters < data.liters_sold:
-        raise HTTPException(400, f"Not enough stock. Only {fuel.actual_liters}L left")
-    fuel.actual_liters -= data.liters_sold
-    session.add(fuel)
+
+    ensure_initial_batch(session, fuel)
+
+    batches = get_fifo_batches(session, fuel.id)
+    total_available = sum(b.liters_remaining for b in batches)
+    if total_available < data.liters_sold:
+        raise HTTPException(400, f"Not enough stock (FIFO). Only {total_available:.2f}L available across {len(batches)} batches, requested {data.liters_sold}L")
+
+    liters_needed = data.liters_sold
+    consumptions = []
+    total_amount = 0.0
+
+    for batch in batches:
+        if liters_needed <= 0:
+            break
+        take = min(batch.liters_remaining, liters_needed)
+        batch.liters_remaining -= take
+        total_amount += take * batch.selling_price
+        consumptions.append((batch, take, batch.selling_price))
+        liters_needed -= take
+        session.add(batch)
+
+    if liters_needed > 0.001:
+        raise HTTPException(400, "FIFO consumption failed - not enough batch stock")
+
+    weighted_avg_price = total_amount / data.liters_sold if data.liters_sold > 0 else 0
+    total_amount = round(total_amount, 2)
+
+    if data.amount_paid < total_amount - 0.01:
+        raise HTTPException(400, f"Amount paid P{data.amount_paid:.2f} is less than due P{total_amount:.2f}")
+    
+    change_given = round(data.amount_paid - total_amount, 2)
+
     sale = Sale(
-        fuel_id=pump.fuel_type_id,
+        fuel_id=fuel.id,
         pump_id=data.pump_id,
         attendant_name=data.attendant_name,
         recorded_by=current_user.id,
         liters_sold=data.liters_sold,
-        price_per_liter=fuel.price,
-        total_amount=data.liters_sold * fuel.price,
+        price_per_liter=round(weighted_avg_price, 2),
+        total_amount=total_amount,
+        amount_paid=round(data.amount_paid, 2),
+        change_given=change_given,
+        receipt_no="TMP",
         payment_method=data.payment_method
     )
     session.add(sale)
+    session.flush()
+
+    sale.receipt_no = f"F-{sale.sold_at.strftime('%y%m%d')}-{sale.id:06d}"
+    session.add(sale)
+
+    fifo_details = []
+    for batch, take, price in consumptions:
+        fsb = FuelSaleBatch(
+            sale_id=sale.id,
+            batch_id=batch.id,
+            liters_consumed=take,
+            price_per_liter=price,
+            total_amount=round(take * price, 2)
+        )
+        session.add(fsb)
+        fifo_details.append(FifoSaleDetail(
+            batch_id=batch.id,
+            liters_consumed=take,
+            price_per_liter=price,
+            total_amount=round(take * price, 2),
+            restocked_at=batch.restocked_at
+        ))
+
+    remaining_batches = get_fifo_batches(session, fuel.id)
+    fuel.actual_liters = sum(b.liters_remaining for b in remaining_batches)
+    fuel.price = remaining_batches[0].selling_price if remaining_batches else weighted_avg_price
+    session.add(fuel)
+
     session.commit()
     session.refresh(sale)
+
     return SaleResponse(
         id=sale.id,
         product_type="fuel",
@@ -55,8 +144,13 @@ def create_fuel_sale(
         liters_sold=sale.liters_sold,
         price_per_liter=sale.price_per_liter,
         total_amount=sale.total_amount,
+        amount_paid=sale.amount_paid,
+        change_given=sale.change_given,
+        receipt_no=sale.receipt_no,
         payment_method=sale.payment_method,
-        sold_at=sale.sold_at
+        sold_at=sale.sold_at,
+        fifo_breakdown=fifo_details,
+        is_split_price=len(fifo_details) > 1
     )
 
 @router.post("/oil", response_model=OilSaleResponse)
@@ -73,7 +167,13 @@ def create_oil_sale(
     if oil.stock < data.quantity:
         raise HTTPException(400, f"Insufficient stock. Only {oil.stock} left")
     attendant = data.attendant_name or current_user.name
-    total = data.quantity * oil.price
+    total = round(data.quantity * oil.price, 2)
+    
+    if data.amount_paid < total - 0.01:
+        raise HTTPException(400, f"Amount paid P{data.amount_paid:.2f} is less than due P{total:.2f}")
+    
+    change_given = round(data.amount_paid - total, 2)
+    
     oil.stock -= data.quantity
     session.add(oil)
     sale = OilSale(
@@ -81,10 +181,16 @@ def create_oil_sale(
         quantity=data.quantity,
         price_per_unit=oil.price,
         total_amount=total,
+        amount_paid=round(data.amount_paid, 2),
+        change_given=change_given,
+        receipt_no="TMP",
         payment_method=data.payment_method,
         attendant_name=attendant,
         sold_by=current_user.id
     )
+    session.add(sale)
+    session.flush()
+    sale.receipt_no = f"O-{sale.sold_at.strftime('%y%m%d')}-{sale.id:06d}"
     session.add(sale)
     session.commit()
     session.refresh(sale)
@@ -96,6 +202,9 @@ def create_oil_sale(
         quantity=sale.quantity,
         price_per_unit=sale.price_per_unit,
         total_amount=sale.total_amount,
+        amount_paid=sale.amount_paid,
+        change_given=sale.change_given,
+        receipt_no=sale.receipt_no,
         payment_method=sale.payment_method,
         attendant_name=sale.attendant_name,
         sold_at=sale.sold_at,
@@ -143,6 +252,8 @@ def get_fuel_history(
         fuel = session.get(Fuel, s.fuel_id)
         pump = session.get(Pump, s.pump_id)
         user = session.get(User, s.recorded_by)
+        batches = session.exec(select(FuelSaleBatch).where(FuelSaleBatch.sale_id == s.id)).all()
+        fifo = [FifoSaleDetail(batch_id=b.batch_id, liters_consumed=b.liters_consumed, price_per_liter=b.price_per_liter, total_amount=b.total_amount) for b in batches] if batches else None
         items.append(SaleHistoryItem(
             id=s.id,
             sold_at=s.sold_at,
@@ -152,10 +263,14 @@ def get_fuel_history(
             liters_sold=s.liters_sold,
             price_per_liter=s.price_per_liter,
             total_amount=s.total_amount,
+            amount_paid=getattr(s, 'amount_paid', s.total_amount),
+            change_given=getattr(s, 'change_given', 0),
+            receipt_no=getattr(s, 'receipt_no', None),
             payment_method=s.payment_method,
             recorded_by=user.name if user else "Unknown",
             fuel_name=fuel.name if fuel else "Unknown",
-            pump_name=pump.name if pump else "Unknown"
+            pump_name=pump.name if pump else "Unknown",
+            fifo_breakdown=fifo
         ))
     return SalesHistoryResponse(
         sales=items,
@@ -210,6 +325,9 @@ def get_oil_history(
             quantity=s.quantity,
             price_per_unit=s.price_per_unit,
             total_amount=s.total_amount,
+            amount_paid=getattr(s, 'amount_paid', s.total_amount),
+            change_given=getattr(s, 'change_given', 0),
+            receipt_no=getattr(s, 'receipt_no', None),
             payment_method=s.payment_method,
             attendant_name=s.attendant_name or "Unknown",
             sold_at=s.sold_at,
@@ -274,6 +392,9 @@ def get_unified_history(
             unit="L",
             price_per_unit=s.price_per_liter,
             total_amount=s.total_amount,
+            amount_paid=getattr(s, 'amount_paid', s.total_amount),
+            change_given=getattr(s, 'change_given', 0),
+            receipt_no=getattr(s, 'receipt_no', None),
             payment_method=s.payment_method,
             attendant_name=s.attendant_name,
             sold_at=s.sold_at,
@@ -293,6 +414,9 @@ def get_unified_history(
             unit="pcs",
             price_per_unit=s.price_per_unit,
             total_amount=s.total_amount,
+            amount_paid=getattr(s, 'amount_paid', s.total_amount),
+            change_given=getattr(s, 'change_given', 0),
+            receipt_no=getattr(s, 'receipt_no', None),
             payment_method=s.payment_method,
             attendant_name=s.attendant_name or "Unknown",
             sold_at=s.sold_at,
@@ -327,13 +451,24 @@ def void_sale(
         sale = session.get(Sale, sale_id)
         if not sale:
             raise HTTPException(404, "Fuel sale not found")
+        sale_batches = session.exec(select(FuelSaleBatch).where(FuelSaleBatch.sale_id == sale_id)).all()
+        for sb in sale_batches:
+            batch = session.get(FuelBatch, sb.batch_id)
+            if batch:
+                batch.liters_remaining += sb.liters_consumed
+                session.add(batch)
+            session.delete(sb)
         fuel = session.get(Fuel, sale.fuel_id)
         if fuel:
-            fuel.actual_liters += sale.liters_sold
+            remaining_batches = session.exec(select(FuelBatch).where(FuelBatch.fuel_id == fuel.id, FuelBatch.liters_remaining > 0)).all()
+            fuel.actual_liters = sum(b.liters_remaining for b in remaining_batches)
+            if remaining_batches:
+                remaining_batches_sorted = sorted(remaining_batches, key=lambda b: b.restocked_at)
+                fuel.price = remaining_batches_sorted[0].selling_price
             session.add(fuel)
         session.delete(sale)
         session.commit()
-        return {"message": f"Fuel sale {sale_id} voided. {sale.liters_sold}L returned."}
+        return {"message": f"Fuel sale {sale_id} voided (FIFO restored). {sale.liters_sold}L returned to batches."}
     else:
         sale = session.get(OilSale, sale_id)
         if not sale:
@@ -358,7 +493,7 @@ def export_unified_csv(
     data = get_unified_history(start_date, end_date, product_type, None, None, 1, 10000, session)
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Date","Time","Type","Product","Qty","Unit","Price","Total","Payment","Attendant","Recorded By","Pump"])
+    writer.writerow(["Date","Time","Type","Product","Qty","Unit","Price","Total","Paid","Change","Receipt","Payment","Attendant","Recorded By","Pump"])
     for s in data.sales:
         writer.writerow([
             s.sold_at.strftime("%Y-%m-%d"),
@@ -369,6 +504,9 @@ def export_unified_csv(
             s.unit,
             f"{s.price_per_unit:.2f}",
             f"{s.total_amount:.2f}",
+            f"{s.amount_paid:.2f}",
+            f"{s.change_given:.2f}",
+            s.receipt_no or "",
             s.payment_method,
             s.attendant_name,
             s.recorded_by,
