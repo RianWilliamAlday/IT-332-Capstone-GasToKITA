@@ -1,4 +1,4 @@
-import os, requests
+import os, requests, pathlib
 
 BASE_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 
@@ -20,8 +20,8 @@ def get_oils(auth: dict):
     r.raise_for_status()
     return r.json()
 
-def create_fuel_sale(auth: dict, pump_id: int, liters_sold: float, attendant_name: str, payment_method: str = "cash"):
-    payload = {"pump_id": pump_id, "liters_sold": liters_sold, "attendant_name": attendant_name, "payment_method": payment_method}
+def create_fuel_sale(auth: dict, pump_id: int, liters_sold: float, attendant_name: str, payment_method: str = "cash", amount_paid: float = 0):
+    payload = {"pump_id": pump_id, "liters_sold": liters_sold, "attendant_name": attendant_name, "payment_method": payment_method, "amount_paid": amount_paid}
     r = requests.post(f"{BASE_URL}/api/sales/fuel", json=payload, headers=_headers(auth), timeout=10)
     if r.status_code >= 400:
         try: detail = r.json().get("detail")
@@ -29,8 +29,8 @@ def create_fuel_sale(auth: dict, pump_id: int, liters_sold: float, attendant_nam
         raise Exception(detail or f"Fuel sale failed {r.status_code}")
     return r.json()
 
-def create_oil_sale(auth: dict, oil_id: int, quantity: int, attendant_name: str, payment_method: str = "cash"):
-    payload = {"oil_id": oil_id, "quantity": quantity, "payment_method": payment_method, "attendant_name": attendant_name}
+def create_oil_sale(auth: dict, oil_id: int, quantity: int, attendant_name: str, payment_method: str = "cash", amount_paid: float = 0):
+    payload = {"oil_id": oil_id, "quantity": quantity, "payment_method": payment_method, "attendant_name": attendant_name, "amount_paid": amount_paid}
     r = requests.post(f"{BASE_URL}/api/sales/oil", json=payload, headers=_headers(auth), timeout=10)
     if r.status_code >= 400:
         try: detail = r.json().get("detail")
@@ -173,3 +173,25 @@ def get_attendant_leaderboard(auth, days=7):
 def get_attendant_performance(auth, attendant_name, days=30):
     r = requests.get(f"{BASE_URL}/analytics/attendants/{attendant_name}/performance", params={"days": days}, headers=_headers(auth), timeout=10)
     r.raise_for_status(); return r.json()
+
+def download_receipt_pdf(auth: dict, sale_id: int, product_type="fuel"):
+    try:
+        r = requests.get(
+            f"{BASE_URL}/api/receipts/{product_type}/{sale_id}/pdf", 
+            headers=_headers(auth), 
+            timeout=15
+        )
+        r.raise_for_status()
+        return r.content
+    except Exception as ex:
+        raise Exception(f"Receipt PDF failed: {ex}")
+
+def save_receipt_pdf(auth: dict, sale_id: int, receipt_no: str, product_type="fuel", save_dir=None):
+    pdf_bytes = download_receipt_pdf(auth, sale_id, product_type)
+    
+    if save_dir is None:
+        save_dir = pathlib.Path.home() / "Downloads"
+    
+    file_path = pathlib.Path(save_dir) / f"receipt_{receipt_no}.pdf"
+    file_path.write_bytes(pdf_bytes)
+    return str(file_path)
