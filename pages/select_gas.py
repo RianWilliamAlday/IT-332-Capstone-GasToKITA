@@ -1,6 +1,7 @@
 import flet as ft
 import time
 from pages.api_client import get_fuels, PUMP_MAP
+from pages.history import TEXT_WHITE
 
 RED = "#A61E22"
 LIGHT_GRAY = "#E9E9E9"
@@ -18,7 +19,7 @@ FALLBACK_PRICES = {
 }
 
 def build_pump_page(page: ft.Page, auth: dict):
-    page.title = "Gasoline Selector"
+    page.title = "Fuel Selection"
     page.bgcolor = LIGHT_GRAY
     page.padding = 0
 
@@ -28,6 +29,18 @@ def build_pump_page(page: ft.Page, auth: dict):
     if "fuels_data" in auth:
         for f in auth["fuels_data"]:
             fuel_lookup[f["name"]] = f
+
+    async def go_logout(e):
+            await page.shared_preferences.remove("gastokita.auth_token")
+            await page.shared_preferences.remove("gastokita.user_json")
+        
+            auth.clear()
+            auth.update({"token": None, "role": None, "user": None})
+        
+            page.controls.clear()
+            from app import main as app_main
+            await app_main(page)
+            page.update()
 
     def go_back(e):
         from pages.select import select_transaction
@@ -247,7 +260,7 @@ def build_pump_page(page: ft.Page, auth: dict):
             controls=[
                 ft.Row(spacing=10, controls=[
                     ft.TextButton("← Back", style=ft.ButtonStyle(color="white"), on_click=go_back),
-                    ft.Text("Cashier", size=28, weight=ft.FontWeight.BOLD, color="white"),
+                    ft.Text("Fuels", size=28, weight=ft.FontWeight.BOLD, color="white"),
                 ]),
                 ft.Row(spacing=15, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
                     ft.Text("U-Fuel", size=28, weight=ft.FontWeight.BOLD, color="white"),
@@ -257,6 +270,10 @@ def build_pump_page(page: ft.Page, auth: dict):
             ],
         ),
     )
-    footer = ft.Container(height=80, bgcolor=RED)
+    footer = ft.Container(height=80,bgcolor=RED, padding=ft.Padding.symmetric(vertical=14, horizontal=24),content=ft.Row([
+                        ft.Container(content=ft.Row([ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16), ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)], spacing=6), bgcolor="#6B6B6B", border_radius=6, padding=ft.Padding.symmetric(vertical=8, horizontal=14), ink=True, on_click=go_logout)
+                        ]
+                    )
+                )
 
     return ft.Column(spacing=0, expand=True, controls=[header, body, footer])
