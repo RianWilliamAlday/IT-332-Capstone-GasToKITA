@@ -7,3 +7,4 @@ backend/.env
 .cursor/
 .vscode/
 pages/optimization.py
+.env
