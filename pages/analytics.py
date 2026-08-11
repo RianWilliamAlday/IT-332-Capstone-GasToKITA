@@ -54,8 +54,6 @@ def analytics_page(page: ft.Page, auth: dict):
     page.bgcolor = "#F5F5F5"
     page.padding = 0
     page.theme = ft.Theme(color_scheme_seed=DARK_RED)
-
-    # State variables for detailed view selection
     selected_attendant = {"name": None}
 
     days_dropdown = ft.Dropdown(
@@ -79,8 +77,7 @@ def analytics_page(page: ft.Page, auth: dict):
             ft.dropdown.Option("oil", "Oil only"),
         ]
     )
-    
-    # New Attendant Leaderboard Sort Dropdown
+
     attendant_sort_dropdown = ft.Dropdown(
         label="Sort Attendants By", value="revenue", filled=True, fill_color="white",
         border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED,
@@ -372,8 +369,6 @@ def analytics_page(page: ft.Page, auth: dict):
             days = int(days_dropdown.value)
             perf = get_attendant_performance(auth, attendant_name=name, days=days)
             summary = perf.get("summary", {})
-            
-            # Sub-charts or metrics for individual attendant
             f_mix = perf.get("fuel_mix", [])
             fuel_mix_text = ", ".join([f"{f['fuel_name']}: {f['liters']}L" for f in f_mix]) if f_mix else "No fuel mix logs"
             

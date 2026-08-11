@@ -1,6 +1,7 @@
 import flet as ft
 import time
 from pages.api_client import get_oils
+from pages.history import TEXT_WHITE
 
 RED = "#A61E22"
 LIGHT_GRAY = "#E9E9E9"
@@ -14,22 +15,43 @@ def oil_card(oil: dict, on_click):
     low = stock <= oil.get("low_stock_threshold", 5)
 
     return ft.Container(
-        width=220, height=180, bgcolor=RED, border_radius=16, padding=8,
-        on_click=lambda e: on_click(oil), ink=True,
-        content=ft.Column(spacing=0, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-            ft.Container(expand=True, bgcolor=WHITE, border_radius=12,
-                alignment=ft.Alignment(0, 0),
-                content=ft.Column(alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4, controls=[
-                    ft.Icon(ft.Icons.WATER_DROP_OUTLINED, size=50, color="black"),
-                    ft.Text(f"Stock: {stock}", size=12, weight=ft.FontWeight.BOLD, color="black" if not low else RED),
-                    ft.Text(f"₱{price:.2f}", size=12, color="grey"),
-                ])),
-            ft.Container(height=50, alignment=ft.Alignment(0, 0),
-                content=ft.Column(alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0, controls=[
-                    ft.Text(brand, size=12, weight=ft.FontWeight.BOLD, color=WHITE),
-                    ft.Text(name, size=14, weight=ft.FontWeight.BOLD, color=WHITE, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                ])),
-        ]),
+        width=185, 
+        height=240,
+        bgcolor=RED, 
+        border_radius=25, 
+        padding=15,
+        on_click=lambda e: on_click(oil), 
+        ink=True,
+        content=ft.Column(
+            spacing=10,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER, 
+            controls=[
+                ft.Container(
+                    expand=True, 
+                    bgcolor=WHITE, 
+                    border_radius=18,
+                    alignment=ft.Alignment(0, 0),
+                    content=ft.Column(
+                        alignment=ft.MainAxisAlignment.CENTER, 
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER, 
+                        spacing=4, 
+                        controls=[
+                            ft.Icon(ft.Icons.WATER_DROP_OUTLINED, size=50, color="black"),
+                            ft.Text(f"Stock: {stock}", size=12, weight=ft.FontWeight.BOLD, color=RED if low else "black"),
+                            ft.Text(f"₱{price:.2f}", size=12, color="grey"),
+                        ]
+                    )
+                ),
+                ft.Column(
+                    spacing=0,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Text(brand, size=12, weight=ft.FontWeight.BOLD, color=WHITE),
+                        ft.Text(name, size=14, weight=ft.FontWeight.BOLD, color=WHITE, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                    ]
+                )
+            ]
+        ),
     )
 
 def build_oil_page(page: ft.Page, auth: dict):
@@ -38,6 +60,18 @@ def build_oil_page(page: ft.Page, auth: dict):
     page.padding = 0
 
     oils_state = {"error": None}
+
+    async def go_logout(e):
+            await page.shared_preferences.remove("gastokita.auth_token")
+            await page.shared_preferences.remove("gastokita.user_json")
+        
+            auth.clear()
+            auth.update({"token": None, "role": None, "user": None})
+        
+            page.controls.clear()
+            from app import main as app_main
+            await app_main(page)
+            page.update()
 
     def go_back(e):
         from pages.select import select_transaction
@@ -147,10 +181,10 @@ def build_oil_page(page: ft.Page, auth: dict):
             ft.Container(content=oil_card(oil, open_oil_dialog), col={"sm": 12, "md": 4, "lg": 4})
             for oil in auth.get("oils_data", [])
         ]
-        return ft.Column(spacing=10, controls=[banner, oil_grid])
+        return ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, expand=True, controls=[banner, oil_grid])
 
     if "oils_data" in auth:
-        main_content = ft.Container(expand=True, bgcolor=WHITE, alignment=ft.Alignment(0, -0.2), padding=40, content=build_oil_layout())
+        main_content = ft.Container(expand=True, bgcolor=WHITE, alignment=ft.Alignment(0, -0.1), padding=40, content=build_oil_layout())
     else:
         main_content = ft.Container(expand=True, bgcolor=WHITE, alignment=ft.Alignment(0, 0), content=ft.ProgressRing(width=40, color=RED))
 
@@ -188,7 +222,7 @@ def build_oil_page(page: ft.Page, auth: dict):
             controls=[
                 ft.Row(spacing=10, controls=[
                     ft.TextButton("← Back", style=ft.ButtonStyle(color="white"), on_click=go_back),
-                    ft.Text("Cashier", size=28, weight=ft.FontWeight.BOLD, color="white"),
+                    ft.Text("Oils", size=28, weight=ft.FontWeight.BOLD, color="white"),
                 ]),
                 ft.Row(spacing=15, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
                     ft.Text("U-Fuel", size=28, weight=ft.FontWeight.BOLD, color="white"),
@@ -198,6 +232,10 @@ def build_oil_page(page: ft.Page, auth: dict):
             ],
         ),
     )
-    footer = ft.Container(height=80, bgcolor=RED)
+    footer = ft.Container(height=80,bgcolor=RED, padding=ft.Padding.symmetric(vertical=14, horizontal=24),content=ft.Row([
+                        ft.Container(content=ft.Row([ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16), ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)], spacing=6), bgcolor="#6B6B6B", border_radius=6, padding=ft.Padding.symmetric(vertical=8, horizontal=14), ink=True, on_click=go_logout)
+                        ]
+                    )
+                )
 
     return ft.Column(spacing=0, expand=True, controls=[header, main_content, footer])

@@ -24,6 +24,7 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     role: str
     name: str
+    user: dict | None = None
 
 @router.post("/admin/login", response_model=TokenResponse)
 def admin_login(data: AdminLoginRequest, session: Session = Depends(get_session)):
@@ -36,13 +37,18 @@ def admin_login(data: AdminLoginRequest, session: Session = Depends(get_session)
         raise HTTPException(401, "Incorrect password")
 
     token = create_access_token({"sub": admin.id, "role": admin.role})
-    return TokenResponse(access_token=token, role=admin.role, name=admin.name)
+    return TokenResponse(
+        access_token=token, 
+        role=admin.role, 
+        name=admin.name,
+        user={"id": admin.id, "name": admin.name, "role": admin.role, "email": admin.email}
+    )
 
 @router.post("/employee/login", response_model=TokenResponse)
 def employee_login(data: EmployeeLoginRequest, session: Session = Depends(get_session)):
     """Employee login: email + password"""
     user = session.exec(select(User).where(User.email == data.email)).first()
-    if not user or user.role!= UserRole.EMPLOYEE:
+    if not user or user.role != UserRole.EMPLOYEE:
         raise HTTPException(401, "Invalid email or password")
 
     if not verify_password(data.password, user.password_hash):
@@ -52,7 +58,26 @@ def employee_login(data: EmployeeLoginRequest, session: Session = Depends(get_se
         raise HTTPException(403, "Account disabled")
 
     token = create_access_token({"sub": user.id, "role": user.role})
-    return TokenResponse(access_token=token, role=user.role, name=user.name)
+    return TokenResponse(
+        access_token=token, 
+        role=user.role, 
+        name=user.name,
+        user={"id": user.id, "name": user.name, "email": user.email, "role": user.role}
+    )
+
+@router.post("/refresh", response_model=TokenResponse)
+def refresh_token(current_user: User = Depends(get_current_user)):
+    """
+    Refresh token - call this to get a new token without re-login.
+    Frontend should call this if token is still valid but close to expiry.
+    """
+    new_token = create_access_token({"sub": current_user.id, "role": current_user.role})
+    return TokenResponse(
+        access_token=new_token,
+        role=current_user.role,
+        name=current_user.name,
+        user={"id": current_user.id, "name": current_user.name, "email": current_user.email, "role": current_user.role}
+    )
 
 @router.post("/create-account", response_model=TokenResponse)
 def create_account(
