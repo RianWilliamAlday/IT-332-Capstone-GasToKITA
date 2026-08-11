@@ -49,15 +49,15 @@ def build_change_page(page: ft.Page, auth: dict, transaction: dict = None, paid:
                         spacing=5,
                         controls=[
                             ft.Text(f"{transaction.get('label','')} {transaction.get('details','')}" if transaction else "", size=12, color="grey"),
-                            ft.Text(f"Paid: â‚±{paid:.2f}", size=14),
-                            ft.Text(f"Due: â‚±{float(transaction.get('total',0)):.2f}" if transaction else "", size=14),
+                            ft.Text(f"Paid: ₱{paid:.2f}", size=14),
+                            ft.Text(f"Due: ₱{float(transaction.get('total',0)):.2f}" if transaction else "", size=14),
                         ]
                     )
                 ),
                 ft.Container(width=180, height=75, bgcolor=RED, border_radius=15, left=160, top=2.5,
                     alignment=ft.Alignment(0, 0),
                     content=ft.Column(alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0, controls=[
-                        ft.Text(f"â‚± {change:.2f}", size=24, weight=ft.FontWeight.BOLD, color="white"),
+                        ft.Text(f"₱ {change:.2f}", size=24, weight=ft.FontWeight.BOLD, color="white"),
                         ft.Text("CHANGE", size=16, weight=ft.FontWeight.BOLD, color="white"),
                     ])
                 ),
