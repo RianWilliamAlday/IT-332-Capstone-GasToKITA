@@ -1,4 +1,5 @@
 import flet as ft
+from pages.history import TEXT_WHITE
 from pages.select import select_transaction
 
 RED = "#A61E22"
@@ -21,14 +22,26 @@ def pa_selection(page: ft.Page, auth: dict):
         page.add(select_transaction(page, auth))
         page.update()
 
+    async def go_logout(e):
+        await page.shared_preferences.remove("gastokita.auth_token")
+        await page.shared_preferences.remove("gastokita.user_json")
+    
+        auth.clear()
+        auth.update({"token": None, "role": None, "user": None})
+    
+        page.controls.clear()
+        from app import main as app_main
+        await app_main(page)
+        page.update()
+
     header = ft.Container(
         bgcolor=RED, height=100, padding=20,
         content=ft.Row(
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             controls=[
-                ft.Column(spacing=0, controls=[
-                    ft.Text("GAStoKITA", size=28, weight=ft.FontWeight.BOLD, color="white")
+                ft.Column(spacing=10, controls=[
+                    ft.Text("Cashier", size=28, weight=ft.FontWeight.BOLD, color="white")
                 ]),
                 ft.Row(spacing=15, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
                     ft.Text("U-Fuel", size=28, weight=ft.FontWeight.BOLD, color="white"),
@@ -37,7 +50,11 @@ def pa_selection(page: ft.Page, auth: dict):
                 ])
             ]))
 
-    footer = ft.Container(height=80, bgcolor=RED)
+    footer = ft.Container(height=80,bgcolor=RED, padding=ft.Padding.symmetric(vertical=14, horizontal=24),content=ft.Row([
+                        ft.Container(content=ft.Row([ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16), ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)], spacing=6), bgcolor="#6B6B6B", border_radius=6, padding=ft.Padding.symmetric(vertical=8, horizontal=14), ink=True, on_click=go_logout)
+                        ]
+                    )
+                )
 
     def card(title, handler):
         is_selected = auth.get("selected_attendant") == title
