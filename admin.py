@@ -4,12 +4,12 @@ import flet as ft
 import httpx, asyncio
 from dotenv import load_dotenv
 
-load_dotenv(Path(_file_).parent / ".env")
+load_dotenv(Path(__file__).parent / ".env")
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
 else:
-    BASE_DIR = Path(_file_).parent
+    BASE_DIR = Path(__file__).parent
 
 API_URL = "http://127.0.0.1:8000"
 RED = "#A61E22"
@@ -175,7 +175,7 @@ async def main(page: ft.Page):
     page.add(build_login_view(page, AUTH))
     page.update()
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     if not is_backend_running():
         threading.Thread(target=run_backend, daemon=True).start()
         time.sleep(0.5)
