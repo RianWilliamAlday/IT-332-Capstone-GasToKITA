@@ -111,14 +111,13 @@ def history_page(page: ft.Page, auth: dict):
         on_click=open_to_picker
     )
 
-    columns = ["Attendant", "Date & Time", "Type", "Item", "Pump", "Quantity", "Amount", "Payment", "Recorded By"]
-    col_widths = [130, 160, 80, 120, 80, 80, 90, 80, 100]
+    columns = ["Attendant", "Date & Time", "Type", "Item", "Pump", "Quantity", "Amount", "Paid", "Change", "Payment", "Recorded By"]
+    col_widths = [130, 160, 80, 120, 80, 80, 90, 90, 90, 80, 100]
 
     def header_cell(text, width): 
         return ft.Container(content=ft.Text(text, size=12, color="#555555", weight=ft.FontWeight.W_600), width=width, padding=ft.Padding.symmetric(horizontal=8, vertical=10))
     def data_cell(text, width, bold=False, color="#111111"): 
         return ft.Container(content=ft.Text(text, size=12, color=color, weight=ft.FontWeight.BOLD if bold else ft.FontWeight.NORMAL, overflow=ft.TextOverflow.ELLIPSIS), width=width, padding=ft.Padding.symmetric(horizontal=8, vertical=12))
-    def fuel_badge(label: str):
         bg = "#C62828" if label=="fuel" else "#6A1B9A"
         icon = ft.Icons.LOCAL_GAS_STATION if label=="fuel" else ft.Icons.SHOPPING_CART
         return ft.Container(content=ft.Row(controls=[ft.Icon(icon, size=12, color="white"), ft.Text(label, size=11, color="white", weight=ft.FontWeight.BOLD)], spacing=4, tight=True), bgcolor=bg, border_radius=12, padding=ft.Padding.symmetric(horizontal=10, vertical=4))
@@ -156,19 +155,21 @@ def history_page(page: ft.Page, auth: dict):
         if search_query:
             sq = search_query.lower()
             sales = [s for s in sales if sq in s.get("product_name","").lower() or sq in s.get("attendant_name","").lower() or sq in s.get("pump_name","").lower()]
-
-        rows = []
         for i, s in enumerate(sales):
             try: dt_str = datetime.fromisoformat(s["sold_at"].replace("Z","+00:00")).strftime("%b %d, %Y, %I:%M %p")
             except: dt_str = s.get("sold_at","")[:16]
+
+            paid = s.get("paid_amount", s.get("amount_paid", s.get("cash_given", s.get("cash", 0))))
+            change = s.get("change_amount", s.get("change", s.get("change_given", 0)))
 
             row = ft.Container(
                 content=ft.Row(controls=[
                     data_cell(s.get("attendant_name",""), col_widths[0]), data_cell(dt_str, col_widths[1]),
                     ft.Container(content=fuel_badge(s.get("product_type","")), width=col_widths[2], padding=ft.Padding.symmetric(horizontal=8, vertical=8)),
-                    data_cell(s.get("product_name",""), col_widths[3]), data_cell(s.get("pump_name","-") or s.get("brand","-"), col_widths[4]),
+                    data_cell(s.get("product_name",""), col_widths[3]), data_cell(s.get("pump_name","-"), col_widths[4]),
                     data_cell(f"{s.get('quantity',0):.1f}{s.get('unit','')}", col_widths[5]), data_cell(f"₱{s.get('total_amount',0):.2f}", col_widths[6], bold=True, color=DARK_RED),
-                    data_cell(s.get("payment_method",""), col_widths[7]), data_cell(s.get("recorded_by",""), col_widths[8]),
+                    data_cell(f"₱{paid:.2f}", col_widths[7], bold=True), data_cell(f"₱{change:.2f}", col_widths[8], color="#2E7D32"),
+                    data_cell(s.get("payment_method",""), col_widths[9]), data_cell(s.get("recorded_by",""), col_widths[10]),
                 ], spacing=0), bgcolor="#FAFAFA" if i%2==0 else "white", border=ft.Border.only(bottom=ft.BorderSide(1, "#F0F0F0")),
             )
             rows.append(row)
@@ -278,3 +279,4 @@ def history_page(page: ft.Page, auth: dict):
     load_data()
 
     return ft.Column(controls=[header, content, footer], spacing=0, expand=True)
+127.0.0.1
