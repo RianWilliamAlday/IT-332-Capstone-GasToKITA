@@ -1,5 +1,5 @@
 import flet as ft
-import threading, os, requests
+import threading, os, requests, asyncio
 
 DARK_RED   = "#8B0000"
 MED_RED    = "#A00000"
@@ -49,21 +49,102 @@ def close_dialog_compat(page: ft.Page):
         try: page.pop_dialog()
         except: pass
 
-def stat_card(icon, title, value, period_label="daily", show_progress=False, progress_value=0.5, sub_label="", dropdowns=None):
-    top_left = None
-    if dropdowns:
-        top_left = ft.Row([
-            ft.Container(ft.Icon(icon, color=TEXT_WHITE, size=20), bgcolor=MED_RED, border_radius=6, padding=6),
-            *[ft.Row([ft.Text(d, color=TEXT_WHITE, size=11), ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, color=TEXT_WHITE, size=14)], spacing=0, tight=True) for d in dropdowns],
-        ], spacing=8)
-    else:
-        top_left = ft.Container(ft.Icon(icon, color=TEXT_WHITE, size=22), bgcolor=MED_RED, border_radius=6, padding=6)
+def animated_fuel_stat_card(page: ft.Page, auth: dict):
+    fuel_name = ft.Text("Loading...", color=TEXT_WHITE, size=11, weight=ft.FontWeight.BOLD)
+    stock_value = ft.Text("--L / --L", color=TEXT_WHITE, size=22, weight=ft.FontWeight.BOLD)
+    progress_text = ft.Text("0%", color=TEXT_WHITE, size=10)
+    progress_bar = ft.ProgressBar(value=0, color="#4CAF50", bgcolor="#6B0000", bar_height=8, border_radius=4)
 
-    card_header = ft.Row([top_left, ft.Row([ft.Text(period_label, color=TEXT_WHITE, size=11), ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, color=TEXT_WHITE, size=14)], spacing=0, tight=True)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
-    body_controls = [card_header, ft.Text(title, color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD), ft.Text(value, color=TEXT_WHITE, size=22, weight=ft.FontWeight.BOLD)]
-    if show_progress:
-        body_controls += [ft.Row([ft.Text(sub_label, color=TEXT_WHITE, size=10), ft.Text(f"{int(progress_value*100)}%", color=TEXT_WHITE, size=10)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), ft.ProgressBar(value=progress_value, color="#4CAF50", bgcolor="#6B0000", border_radius=4, bar_height=8, expand=True)]
-    return ft.Container(content=ft.Column(body_controls, spacing=6), bgcolor=DARK_RED, border_radius=10, padding=14, expand=True)
+    anim_content = ft.Column([
+        ft.Row([
+            ft.Row([
+                ft.Container(ft.Icon(ft.Icons.LOCAL_GAS_STATION, color=TEXT_WHITE, size=20), bgcolor=MED_RED, border_radius=6, padding=6),
+                ft.Container(content=fuel_name, bgcolor="#5A0000", border_radius=12, padding=ft.Padding.symmetric(horizontal=10, vertical=4)),
+            ], spacing=8),
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+        ft.Text("Current Fuel Stock", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD),
+        stock_value,
+        ft.Row([ft.Text("Tank Level", color=TEXT_WHITE, size=10), progress_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+        progress_bar
+    ], spacing=8)
+
+    card = ft.Container(
+        content=anim_content,
+        bgcolor=DARK_RED, border_radius=10, padding=14, expand=True,
+        animate_opacity=ft.Animation(duration=500, curve=ft.AnimationCurve.EASE_IN_OUT),
+        animate_scale=ft.Animation(duration=500, curve=ft.AnimationCurve.EASE_IN_OUT),
+        ink=True
+    )
+
+    fuels_data = []
+
+    def load_from_backend():
+        nonlocal fuels_data
+        try:
+            from pages.api_client import get_fuels
+            fuels_data = get_fuels(auth)
+            if not fuels_data:
+                return
+            f = fuels_data[0]
+            fuel_name.value = f["name"]
+            stock_value.value = f"{f['actual_liters']:,.0f}L / {f['tank_capacity']:,.0f}L"
+            pct = f["actual_liters"] / f["tank_capacity"] if f["tank_capacity"] else 0
+            progress_bar.value = pct
+            progress_text.value = f"{int(pct*100)}%"
+            page.update()
+        except Exception as e:
+            fuel_name.value = "Error"
+            stock_value.value = str(e)[:30]
+            page.update()
+
+    page.run_thread(load_from_backend)
+
+    idx = 0
+    async def auto_cycle():
+        nonlocal idx
+        while True:
+            await asyncio.sleep(4.5) 
+            if len(fuels_data) <= 1:
+                continue
+
+            card.opacity = 0.0
+            card.scale = ft.Scale(0.93)
+            page.update()
+            await asyncio.sleep(0.😎
+
+            idx = (idx + 1) % len(fuels_data)
+            f = fuels_data[idx]
+            fuel_name.value = f["name"]
+            stock_value.value = f"{f['actual_liters']:,.0f}L / {f['tank_capacity']:,.0f}L"
+            pct = f["actual_liters"] / f["tank_capacity"] if f["tank_capacity"] else 0
+            progress_bar.value = pct
+            progress_text.value = f"{int(pct*100)}%"
+
+            card.opacity = 1.0
+            card.scale = ft.Scale(1.0)
+            page.update()
+
+    def on_click(e):
+        page.run_task(cycle_once)
+
+    async def cycle_once():
+        nonlocal idx
+        if not fuels_data: return
+        card.opacity = 0
+        page.update()
+        await asyncio.sleep(0.35)
+        idx = (idx + 1) % len(fuels_data)
+        f = fuels_data[idx]
+        fuel_name.value = f["name"]
+        stock_value.value = f"{f['actual_liters']:,.0f}L / {f['tank_capacity']:,.0f}L"
+        progress_bar.value = f["actual_liters"] / f["tank_capacity"] if f["tank_capacity"] else 0
+        progress_text.value = f"{int(progress_bar.value*100)}%"
+        card.opacity = 1
+        page.update()
+
+    card.on_click = on_click
+    page.run_task(auto_cycle)
+    return card
 
 def action_button(label: str, on_click=None) -> ft.Container:
     return ft.Container(
@@ -120,6 +201,17 @@ def dashboard_page(page: ft.Page, auth: dict):
         page.controls.clear()
         page.add(ai_optimization_page(page, auth))
 
+    def stat_card(icon, title, value, period_label="daily", show_progress=False, progress_value=0.5, sub_label="", dropdowns=None):
+        top_left = None
+        if dropdowns:
+            top_left = ft.Row([
+                ft.Container(ft.Icon(icon, color=TEXT_WHITE, size=20), bgcolor=MED_RED, border_radius=6, padding=6),
+            ], spacing=8)
+        else:
+            top_left = ft.Container(ft.Icon(icon, color=TEXT_WHITE, size=22), bgcolor=MED_RED, border_radius=6, padding=6)
+            card_header = ft.Row([top_left, ft.Row([ft.Text(period_label, color=TEXT_WHITE, size=11), ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, color=TEXT_WHITE, size=14)], spacing=0)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+            return ft.Container(content=ft.Column([card_header, ft.Text(title, color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD), ft.Text(value, color=TEXT_WHITE, size=22, weight=ft.FontWeight.BOLD)], spacing=6), bgcolor=DARK_RED, border_radius=10, padding=14, expand=True)
+
     header = ft.Container(
         content=ft.Row([
             ft.Text("DASHBOARD", color=TEXT_WHITE, size=22, weight=ft.FontWeight.BOLD),
@@ -132,7 +224,7 @@ def dashboard_page(page: ft.Page, auth: dict):
     )
 
     stats_row = ft.Row([
-        stat_card(icon=ft.Icons.LOCAL_GAS_STATION, title="Current Fuel Stock", value="5,000L / 10,000L", period_label="pump 1", show_progress=True, progress_value=0.5, dropdowns=["regular", "pump 1"]),
+        animated_fuel_stat_card(page, auth),
         stat_card(icon=ft.Icons.TRENDING_UP, title="Daily Sales", value="₱ 10,000", period_label="daily"),
         stat_card(icon=ft.Icons.ATTACH_MONEY, title="Daily Net Profit", value="₱ 5,000", period_label="daily"),
     ], spacing=16)
@@ -143,7 +235,7 @@ def dashboard_page(page: ft.Page, auth: dict):
         action_button("View Analytics", on_click=go_analytics),
         action_button("View Inventory", on_click=go_inventory),
         action_button("Transaction History", on_click=go_history),
-        action_button("Inventory Optimization"),
+        action_button("Inventory Optimization", on_click=open_optimization),
     ], spacing=12, tight=True)
 
     quick_actions = ft.Container(content=quick_actions_col, bgcolor=LIGHT_CARD, border_radius=10, padding=18, expand=True)
@@ -155,7 +247,7 @@ def dashboard_page(page: ft.Page, auth: dict):
             content=ft.Row([ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=DARK_GREEN, size=16), ft.Text("Checking stock...", color=TEXT_DARK, size=12, italic=True)], spacing=8),
             bgcolor=LIGHT_CARD, border_radius=6, padding=ft.Padding.symmetric(vertical=10, horizontal=14),
         ),
-    ], spacing=0, tight=True)
+    ], spacing=5, tight=True)
 
     def render_low_stock(data: dict):
         items = data.get("items", [])
@@ -234,3 +326,4 @@ def dashboard_page(page: ft.Page, auth: dict):
     load_low_stock()
 
     return ft.Column([header, body, footer], spacing=0, expand=True)
+127.0.0.1

@@ -51,19 +51,73 @@ def history_page(page: ft.Page, auth: dict):
     fuel_sales_text = ft.Text(str(sum(1 for s in cached_sales if s.get("product_type")=="fuel")), size=20, weight=ft.FontWeight.BOLD, color="#C62828")
     oil_sales_text = ft.Text(str(sum(1 for s in cached_sales if s.get("product_type")=="oil")), size=20, weight=ft.FontWeight.BOLD, color="#6A1B9A")
 
-    search_field = ft.TextField(hint_text="Search", filled=True, fill_color="white", border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED, height=42, width=160, text_style=ft.TextStyle(size=13), content_padding=ft.Padding.symmetric(horizontal=12, vertical=8))
-    type_dropdown = ft.Dropdown(label="Type", value="all", filled=True, fill_color="white", border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED, width=100, options=[ft.dropdown.Option("all","All"), ft.dropdown.Option("fuel","Fuel"), ft.dropdown.Option("oil","Oils")])
-    attendant_dropdown = ft.Dropdown(label="Attendant", value="all", filled=True, fill_color="white", border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED, width=160, options=[
-        ft.dropdown.Option("all","All Attendants"), ft.dropdown.Option("Attendant 1","Pump Attendant 1"), ft.dropdown.Option("Attendant 2","Pump Attendant 2"), ft.dropdown.Option("Attendant 3","Pump Attendant 3"),
-    ])
-    from_date = ft.TextField(label="From Date", hint_text="yyyy-mm-dd", filled=True, fill_color="white", border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED, width=140, text_style=ft.TextStyle(size=13))
-    to_date = ft.TextField(label="To Date", hint_text="yyyy-mm-dd", filled=True, fill_color="white", border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED, width=140, text_style=ft.TextStyle(size=13))
+    search_field = ft.TextField(
+        hint_text="Search", filled=True, fill_color="white", border_radius=6, 
+        border_color="#CCCCCC", focused_border_color=DARK_RED, height=42, width=160, 
+        text_style=ft.TextStyle(size=13), content_padding=ft.Padding.symmetric(horizontal=12, vertical=8)
+    )
+    type_dropdown = ft.Dropdown(
+        label="Type", value="all", filled=True, fill_color="white", border_radius=6, 
+        border_color="#CCCCCC", focused_border_color=DARK_RED, width=110, 
+        options=[ft.dropdown.Option("all","All"), ft.dropdown.Option("fuel","Fuel"), ft.dropdown.Option("oil","Oils")]
+    )
+    attendant_dropdown = ft.Dropdown(
+        label="Attendant", value="all", filled=True, fill_color="white", border_radius=6, 
+        border_color="#CCCCCC", focused_border_color=DARK_RED, width=160, 
+        options=[
+            ft.dropdown.Option("all","All Attendants"), ft.dropdown.Option("Attendant 1","Pump Attendant 1"), 
+            ft.dropdown.Option("Attendant 2","Pump Attendant 2"), ft.dropdown.Option("Attendant 3","Pump Attendant 3"),
+        ]
+    )
 
-    columns = ["Attendant", "Date & Time", "Type", "Item", "Pump", "Quantity", "Amount", "Payment", "Recorded By"]
-    col_widths = [130, 160, 80, 120, 80, 80, 90, 80, 100]
+    def handle_from_date_change(e):
+        if from_datepicker.value:
+            val = from_datepicker.value
+            from_date.value = val.strftime("%Y-%m-%d") if isinstance(val, (datetime, date)) else str(val)[:10]
+            from_date.update()
+            load_data()
 
-    def header_cell(text, width): return ft.Container(content=ft.Text(text, size=12, color="#555555", weight=ft.FontWeight.W_600), width=width, padding=ft.Padding.symmetric(horizontal=8, vertical=10))
-    def data_cell(text, width, bold=False, color="#111111"): return ft.Container(content=ft.Text(text, size=12, color=color, weight=ft.FontWeight.BOLD if bold else ft.FontWeight.NORMAL, overflow=ft.TextOverflow.ELLIPSIS), width=width, padding=ft.Padding.symmetric(horizontal=8, vertical=12))
+    def handle_to_date_change(e):
+        if to_datepicker.value:
+            val = to_datepicker.value
+            to_date.value = val.strftime("%Y-%m-%d") if isinstance(val, (datetime, date)) else str(val)[:10]
+            to_date.update()
+            load_data()
+
+    from_datepicker = ft.DatePicker(on_change=handle_from_date_change)
+    to_datepicker = ft.DatePicker(on_change=handle_to_date_change)
+    page.overlay.extend([from_datepicker, to_datepicker])
+
+    def open_from_picker(e):
+        from_datepicker.open = True
+        page.update()
+
+    def open_to_picker(e):
+        to_datepicker.open = True
+        page.update()
+
+    from_date = ft.TextField(
+        label="From Date", hint_text="Select date", read_only=True, filled=True, fill_color="white", 
+        border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED, width=150, 
+        text_style=ft.TextStyle(size=13),
+        suffix=ft.IconButton(icon=ft.Icons.CALENDAR_MONTH, icon_size=18, icon_color=DARK_RED, on_click=open_from_picker, tooltip="Select From Date"),
+        on_click=open_from_picker
+    )
+    to_date = ft.TextField(
+        label="To Date", hint_text="Select date", read_only=True, filled=True, fill_color="white", 
+        border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED, width=150, 
+        text_style=ft.TextStyle(size=13),
+        suffix=ft.IconButton(icon=ft.Icons.CALENDAR_MONTH, icon_size=18, icon_color=DARK_RED, on_click=open_to_picker, tooltip="Select To Date"),
+        on_click=open_to_picker
+    )
+
+    columns = ["Attendant", "Date & Time", "Type", "Item", "Pump", "Quantity", "Amount", "Paid", "Change", "Payment", "Recorded By"]
+    col_widths = [130, 160, 80, 120, 80, 80, 90, 90, 90, 80, 100]
+
+    def header_cell(text, width): 
+        return ft.Container(content=ft.Text(text, size=12, color="#555555", weight=ft.FontWeight.W_600), width=width, padding=ft.Padding.symmetric(horizontal=8, vertical=10))
+    def data_cell(text, width, bold=False, color="#111111"): 
+        return ft.Container(content=ft.Text(text, size=12, color=color, weight=ft.FontWeight.BOLD if bold else ft.FontWeight.NORMAL, overflow=ft.TextOverflow.ELLIPSIS), width=width, padding=ft.Padding.symmetric(horizontal=8, vertical=12))
     def fuel_badge(label: str):
         bg = "#C62828" if label=="fuel" else "#6A1B9A"
         icon = ft.Icons.LOCAL_GAS_STATION if label=="fuel" else ft.Icons.SHOPPING_CART
@@ -72,8 +126,8 @@ def history_page(page: ft.Page, auth: dict):
     table_header = ft.Container(content=ft.Row(controls=[header_cell(col, col_widths[i]) for i, col in enumerate(columns)], spacing=0), border=ft.Border.only(bottom=ft.BorderSide(1, "#E0E0E0")))
     
     def show_snack(msg, color=DARK_RED):
-        page.snack_bar = ft.SnackBar(content=ft.Text(msg, color="white"), bgcolor=color)
-        page.snack_bar.open = True
+        snack = ft.SnackBar(content=ft.Text(msg, color="white"), bgcolor=color, open=True)
+        page.overlay.append(snack)
         page.update()
 
     def go_dashboard(e):
@@ -108,13 +162,17 @@ def history_page(page: ft.Page, auth: dict):
             try: dt_str = datetime.fromisoformat(s["sold_at"].replace("Z","+00:00")).strftime("%b %d, %Y, %I:%M %p")
             except: dt_str = s.get("sold_at","")[:16]
 
+            paid = s.get("paid_amount", s.get("amount_paid", s.get("cash_given", s.get("cash", 0))))
+            change = s.get("change_amount", s.get("change", s.get("change_given", 0)))
+
             row = ft.Container(
                 content=ft.Row(controls=[
                     data_cell(s.get("attendant_name",""), col_widths[0]), data_cell(dt_str, col_widths[1]),
                     ft.Container(content=fuel_badge(s.get("product_type","")), width=col_widths[2], padding=ft.Padding.symmetric(horizontal=8, vertical=8)),
-                    data_cell(s.get("product_name",""), col_widths[3]), data_cell(s.get("pump_name","-") or s.get("brand","-"), col_widths[4]),
+                    data_cell(s.get("product_name",""), col_widths[3]), data_cell(s.get("pump_name","-"), col_widths[4]),
                     data_cell(f"{s.get('quantity',0):.1f}{s.get('unit','')}", col_widths[5]), data_cell(f"₱{s.get('total_amount',0):.2f}", col_widths[6], bold=True, color=DARK_RED),
-                    data_cell(s.get("payment_method",""), col_widths[7]), data_cell(s.get("recorded_by",""), col_widths[8]),
+                    data_cell(f"₱{paid:.2f}", col_widths[7], bold=True), data_cell(f"₱{change:.2f}", col_widths[8], color="#2E7D32"),
+                    data_cell(s.get("payment_method",""), col_widths[9]), data_cell(s.get("recorded_by",""), col_widths[10]),
                 ], spacing=0), bgcolor="#FAFAFA" if i%2==0 else "white", border=ft.Border.only(bottom=ft.BorderSide(1, "#F0F0F0")),
             )
             rows.append(row)
@@ -163,8 +221,6 @@ def history_page(page: ft.Page, auth: dict):
     search_field.on_change = lambda e: load_data()
     type_dropdown.on_change = lambda e: load_data()
     attendant_dropdown.on_change = lambda e: load_data()
-    from_date.on_change = lambda e: load_data()
-    to_date.on_change = lambda e: load_data()
 
     def do_export(e):
         def bg():
@@ -172,10 +228,14 @@ def history_page(page: ft.Page, auth: dict):
             try:
                 sd, ed = from_date.value.strip() if from_date.value else None, to_date.value.strip() if to_date.value else None
                 csv_text = export_history_csv(auth, product_type=type_dropdown.value, start_date=sd, end_date=ed)
-                path = os.path.join(os.path.expanduser("~"), "Downloads", f"sales_{sd or 'all'}_{ed or 'all'}.csv")
+                downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+                os.makedirs(downloads_dir, exist_ok=True)
+                filename = f"sales_{sd or 'all'}_{ed or 'all'}.csv"
+                path = os.path.join(downloads_dir, filename)
                 with open(path, "w", encoding="utf-8", newline="") as f: f.write(csv_text)
-                show_snack(f"Exported to {path}", "#2E7D32")
-            except Exception as ex: show_snack(f"Export failed: {ex}", DARK_RED)
+                show_snack(f"Exported to Downloads: {filename}", "#2E7D32")
+            except Exception as ex:
+                show_snack(f"Export failed: {ex}", DARK_RED)
         page.run_thread(bg)
 
     export_button = ft.Button(content="EXPORT CSV", icon=ft.Icons.DOWNLOAD, bgcolor=DARK_RED, color="white", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=6), text_style=ft.TextStyle(size=13, weight=ft.FontWeight.BOLD)), height=40, on_click=do_export)
@@ -222,3 +282,4 @@ def history_page(page: ft.Page, auth: dict):
     load_data()
 
     return ft.Column(controls=[header, content, footer], spacing=0, expand=True)
+127.0.0.1
