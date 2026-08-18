@@ -118,7 +118,6 @@ def history_page(page: ft.Page, auth: dict):
         return ft.Container(content=ft.Text(text, size=12, color="#555555", weight=ft.FontWeight.W_600), width=width, padding=ft.Padding.symmetric(horizontal=8, vertical=10))
     def data_cell(text, width, bold=False, color="#111111"): 
         return ft.Container(content=ft.Text(text, size=12, color=color, weight=ft.FontWeight.BOLD if bold else ft.FontWeight.NORMAL, overflow=ft.TextOverflow.ELLIPSIS), width=width, padding=ft.Padding.symmetric(horizontal=8, vertical=12))
-    def fuel_badge(label: str):
         bg = "#C62828" if label=="fuel" else "#6A1B9A"
         icon = ft.Icons.LOCAL_GAS_STATION if label=="fuel" else ft.Icons.SHOPPING_CART
         return ft.Container(content=ft.Row(controls=[ft.Icon(icon, size=12, color="white"), ft.Text(label, size=11, color="white", weight=ft.FontWeight.BOLD)], spacing=4, tight=True), bgcolor=bg, border_radius=12, padding=ft.Padding.symmetric(horizontal=10, vertical=4))
@@ -156,8 +155,6 @@ def history_page(page: ft.Page, auth: dict):
         if search_query:
             sq = search_query.lower()
             sales = [s for s in sales if sq in s.get("product_name","").lower() or sq in s.get("attendant_name","").lower() or sq in s.get("pump_name","").lower()]
-
-        rows = []
         for i, s in enumerate(sales):
             try: dt_str = datetime.fromisoformat(s["sold_at"].replace("Z","+00:00")).strftime("%b %d, %Y, %I:%M %p")
             except: dt_str = s.get("sold_at","")[:16]

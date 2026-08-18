@@ -6,8 +6,8 @@ LIGHT_GRAY = "#E9E9E9"
 NAVY_COLOR = "#0F3057"
 GREEN_COLOR = "#006400"
 
-def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None):
-    page.title = "GasToKITA"
+def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None, ):
+    page.title = "POS - Payment"
     page.bgcolor = LIGHT_GRAY
     page.padding = 0
 
@@ -168,14 +168,14 @@ def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None):
                 if tx_type == "fuel":
                     pump_id = transaction.get("pump_id", 1)
                     liters = transaction.get("liters", total_due / 60.0)
-                    result = create_fuel_sale(auth, pump_id, liters, attendant, payment_method)
+                    result = create_fuel_sale(auth, pump_id, liters, attendant, payment_method, paid["value"])
                     print(f"[SALE OK] Fuel: {result}")
                 else:
                     oil_id = transaction.get("oil_id")
                     qty = transaction.get("quantity", 1)
                     if not oil_id:
                         raise Exception("Missing oil_id")
-                    result = create_oil_sale(auth, oil_id, qty, attendant, payment_method)
+                    result = create_oil_sale(auth, oil_id, qty, attendant, payment_method, paid["value"])
                     print(f"[SALE OK] Oil: {result}")
 
                 auth.pop("fuels_data", None)
@@ -185,7 +185,7 @@ def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None):
 
                 from pages.change import build_change_page
                 page.controls.clear()
-                page.add(build_change_page(page, auth, transaction, paid["value"], change))
+                page.add(build_change_page(page, auth, transaction, paid["value"], change, sale=result, tx_type=tx_type))
                 page.update()
 
             except Exception as ex:
