@@ -241,24 +241,29 @@ def analytics_page(page: ft.Page, auth: dict):
         )
 
     def build_fuel_pie(fuel_data):
-        if not fuel_data:
-            return ft.Container(content=ft.Text("No fuel sales data available.", size=12, color="#888"), padding=20)
-        colors = ["#8B0000", "#C62828", "#EF5350", "#FF8A65", "#FFCCBC", "#B71C1C"]
-        total = sum([f.get("liters_sold", 0) for f in fuel_data]) or 1
+        if not fuel_data: return ft.Text("No fuel sales")
+        total = sum([f.get("liters_sold",0) for f in fuel_data]) or 1
+        colors = ["#8B0000", "#C62828", "#EF5350"]
         sections = []
+        legend = []
         for i, f in enumerate(fuel_data):
-            liters = f.get("liters_sold", 0)
-            pct = liters / total * 100
-            sections.append(
-                fch.PieChartSection(
-                    value=float(liters),
-                    title=f"{f.get('fuel_name','Unknown')}\n{pct:.0f}%",
-                    color=colors[i % len(colors)],
-                    radius=70,
-                    title_style=ft.TextStyle(size=10, color="white", weight=ft.FontWeight.BOLD)
-                )
-            )
-        return fch.PieChart(sections=sections, sections_space=2, center_space_radius=35, expand=True)
+            liters = f.get("liters_sold",0)
+            pct = liters/total*100
+        # Only show % inside if slice >5%, otherwise legend only
+            sections.append(fch.PieChartSection(
+                value=float(liters),
+                title=f"{pct:.0f}%" if pct > 5 else "",
+                color=colors[i%len(colors)],
+                radius=70
+            ))
+            legend.append(ft.Row([
+                ft.Container(width=10,height=10,bgcolor=colors[i%len(colors)],border_radius=2),
+            ft.Text(f"{f.get('fuel_name')} - {pct:.1f}% ({liters:.0f}L)", size=11)
+        ]))
+    return ft.Column([
+        ft.Container(content=fch.PieChart(sections=sections, center_space_radius=35, sections_space=2), height=200),
+        ft.Column(controls=legend, spacing=4)
+    ])
 
     def build_oil_bar(top_oils):
         if not top_oils:

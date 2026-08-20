@@ -137,3 +137,14 @@ class Expense(SQLModel, table=True):
     amount: float
     expense_date: datetime = Field(default_factory=datetime.now)
     recorded_by: Optional[int] = Field(default=None, foreign_key="user.id")
+
+class Attendant(SQLModel, table=True):
+    __tablename__ = "attendant"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    employee_id: Optional[str] = Field(default=None, index=True)
+    contact: Optional[str] = Field(default=None, description="Email OR phone number")
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    deactivated_at: Optional[datetime] = None
