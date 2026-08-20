@@ -152,33 +152,99 @@ def get_demand_heatmap(
 
 @router.get("/profit-margins/fuel")
 def get_fuel_profit_margins(days: int = 30, session: Session = Depends(get_session)):
+    """
+    FIXED: Uses fuel_sale_batch + fuel_batch for true FIFO COGS
+    Old code used AVG(cost) or 0 when no batch -> 100% margin bug
+    """
     since = datetime.now() - timedelta(days=days)
     sql = text("""
-        WITH fuel_costs AS (
-            SELECT fuel_id, SUM(cost) as total_cost, SUM(liters_added) as total_liters_added,
-                   CASE WHEN SUM(liters_added) > 0 THEN SUM(cost)/SUM(liters_added) ELSE 0 END as avg_cost_per_liter
-            FROM restocklog WHERE restocked_at >= :since GROUP BY fuel_id
+        WITH sales_in_period AS (
+            SELECT id, fuel_id, liters_sold, total_amount as revenue, price_per_liter
+            FROM sale
+            WHERE sold_at >= :since
         ),
-        fuel_sales AS (
-            SELECT fuel_id, SUM(liters_sold) as liters_sold, SUM(total_amount) as revenue, AVG(price_per_liter) as avg_selling_price
-            FROM sale WHERE sold_at >= :since GROUP BY fuel_id
+        cogs AS (
+            -- True FIFO cost from fuel_sale_batch -> fuel_batch
+            SELECT 
+                s.fuel_id,
+                COALESCE(SUM(fsb.liters_consumed * fb.cost_per_liter), 0) as total_cost,
+                COALESCE(SUM(fsb.liters_consumed), 0) as liters_from_batches
+            FROM sales_in_period s
+            LEFT JOIN fuel_sale_batch fsb ON fsb.sale_id = s.id
+            LEFT JOIN fuel_batch fb ON fb.id = fsb.batch_id
+            GROUP BY s.fuel_id
+        ),
+        fallback_cost AS (
+            -- Fallback: if fuel_sale_batch is empty (old sales), use weighted avg cost from fuel_batch
+            SELECT 
+                fb.fuel_id,
+                CASE WHEN SUM(fb.liters_initial) > 0 
+                     THEN SUM(fb.liters_initial * fb.cost_per_liter) / SUM(fb.liters_initial)
+                     ELSE 0 END as avg_cost
+            FROM fuel_batch fb
+            GROUP BY fb.fuel_id
+        ),
+        agg AS (
+            SELECT 
+                s.fuel_id,
+                f.name as fuel_name,
+                SUM(s.liters_sold) as liters_sold,
+                SUM(s.revenue) as revenue,
+                COALESCE(c.total_cost, 0) as cogs_from_fifo,
+                COALESCE(c.liters_from_batches, 0) as liters_fifo,
+                COALESCE(fc.avg_cost, 0) as fallback_avg_cost
+            FROM sales_in_period s
+            JOIN fuel f ON f.id = s.fuel_id
+            LEFT JOIN cogs c ON c.fuel_id = s.fuel_id
+            LEFT JOIN fallback_cost fc ON fc.fuel_id = s.fuel_id
+            GROUP BY s.fuel_id, f.name, c.total_cost, c.liters_from_batches, fc.avg_cost
         )
-        SELECT f.id, f.name, COALESCE(fs.revenue,0) as revenue, COALESCE(fs.liters_sold,0) as liters_sold,
-               COALESCE(fc.avg_cost_per_liter,0) as avg_cost, COALESCE(fs.avg_selling_price, f.price) as selling_price,
-               COALESCE(fs.revenue,0) - (COALESCE(fs.liters_sold,0) * COALESCE(fc.avg_cost_per_liter,0)) as gross_profit
-        FROM fuel f LEFT JOIN fuel_sales fs ON fs.fuel_id = f.id LEFT JOIN fuel_costs fc ON fc.fuel_id = f.id
+        SELECT 
+            fuel_id,
+            fuel_name,
+            liters_sold,
+            revenue,
+            CASE 
+                WHEN liters_fifo > 0 THEN cogs_from_fifo
+                ELSE liters_sold * fallback_avg_cost
+            END as total_cost,
+            CASE 
+                WHEN liters_fifo > 0 THEN cogs_from_fifo / NULLIF(liters_fifo,0)
+                ELSE fallback_avg_cost
+            END as cost_per_liter,
+            CASE 
+                WHEN liters_fifo > 0 THEN (revenue - cogs_from_fifo)
+                ELSE (revenue - liters_sold * fallback_avg_cost)
+            END as profit,
+            CASE 
+                WHEN revenue > 0 AND liters_fifo > 0 THEN ((revenue - cogs_from_fifo) / revenue * 100)
+                WHEN revenue > 0 THEN ((revenue - liters_sold * fallback_avg_cost) / revenue * 100)
+                ELSE 0
+            END as margin_percent
+        FROM agg
     """)
     rows = session.execute(sql, {"since": since}).fetchall()
     result = []
     for r in rows:
-        revenue = r[2]; profit = r[6]
-        margin = (profit / revenue * 100) if revenue > 0 else 0
+        fuel_id, fuel_name, liters_sold, revenue, total_cost, cost_per_liter, profit, margin_percent = r
+        if (cost_per_liter is None or cost_per_liter == 0) and revenue and revenue > 0:
+            last_cost_sql = text("SELECT cost_per_liter FROM fuel_batch WHERE fuel_id=:fid ORDER BY restocked_at DESC LIMIT 1")
+            last = session.execute(last_cost_sql, {"fid": fuel_id}).fetchone()
+            if last and last[0]:
+                cost_per_liter = last[0]
+                total_cost = (liters_sold or 0) * cost_per_liter
+                profit = (revenue or 0) - total_cost
+                margin_percent = (profit / revenue * 100) if revenue else 0
+
         result.append({
-            "product_type": "fuel",
-            "fuel_id": r[0], "fuel_name": r[1],
-            "revenue": round(revenue,2), "liters_sold": round(r[3],2),
-            "avg_cost_per_liter": round(r[4],2), "avg_selling_price": round(r[5],2),
-            "gross_profit": round(profit,2), "margin_percent": round(margin,2)
+            "fuel_id": fuel_id,
+            "fuel_name": fuel_name,
+            "liters_sold": round(liters_sold or 0, 2),
+            "revenue": round(revenue or 0, 2),
+            "total_cost": round(total_cost or 0, 2),
+            "cost_per_liter": round(cost_per_liter or 0, 2),
+            "profit": round(profit or 0, 2),
+            "margin_percent": round(margin_percent or 0, 2),
         })
     return result
 
@@ -186,55 +252,76 @@ def get_fuel_profit_margins(days: int = 30, session: Session = Depends(get_sessi
 def get_oil_profit_margins(days: int = 30, session: Session = Depends(get_session)):
     since = datetime.now() - timedelta(days=days)
     sql = text("""
-        WITH oil_costs AS (
-            SELECT oil_product_id, SUM(total_cost) as total_cost, SUM(quantity_added) as total_qty,
-                   CASE WHEN SUM(quantity_added) > 0 THEN SUM(total_cost)/SUM(quantity_added) ELSE 0 END as avg_cost_per_unit
-            FROM oil_restock_log WHERE restocked_at >= :since GROUP BY oil_product_id
-        ),
-        oil_sales AS (
-            SELECT oil_product_id, SUM(quantity) as qty_sold, SUM(total_amount) as revenue, AVG(price_per_unit) as avg_selling_price
-            FROM oil_sale WHERE sold_at >= :since GROUP BY oil_product_id
-        )
-        SELECT op.id, op.brand, op.name, COALESCE(os.revenue,0) as revenue, COALESCE(os.qty_sold,0) as qty_sold,
-               COALESCE(oc.avg_cost_per_unit,0) as avg_cost, COALESCE(os.avg_selling_price, op.price) as selling_price,
-               COALESCE(os.revenue,0) - (COALESCE(os.qty_sold,0) * COALESCE(oc.avg_cost_per_unit,0)) as gross_profit
-        FROM oil_product op LEFT JOIN oil_sales os ON os.oil_product_id = op.id LEFT JOIN oil_costs oc ON oc.oil_product_id = op.id
+        SELECT 
+            op.id as oil_id,
+            op.brand,
+            op.name,
+            SUM(os.quantity) as quantity_sold,
+            SUM(os.total_amount) as revenue,
+            -- Oil cost: use oil_product.cost (current) as fallback, but ideally from restock logs weighted avg
+            CASE 
+                WHEN SUM(os.quantity) > 0 THEN SUM(os.quantity) * AVG(op.cost)
+                ELSE 0
+            END as total_cost,
+            AVG(op.cost) as cost_per_unit
+        FROM oil_sale os
+        JOIN oil_product op ON op.id = os.oil_product_id
+        WHERE os.sold_at >= :since
+        GROUP BY op.id, op.brand, op.name
     """)
     rows = session.execute(sql, {"since": since}).fetchall()
     result = []
-    for r in rows:
-        revenue = r[3]; profit = r[7]
-        margin = (profit / revenue * 100) if revenue > 0 else 0
+    for oil_id, brand, name, qty, rev, cost, cost_per in rows:
+        profit = (rev or 0) - (cost or 0)
+        margin = (profit / rev * 100) if rev else 0
         result.append({
-            "product_type": "oil",
-            "oil_id": r[0], "brand": r[1], "oil_name": r[2],
-            "revenue": round(revenue,2), "quantity_sold": int(r[4]),
-            "avg_cost_per_unit": round(r[5],2), "avg_selling_price": round(r[6],2),
-            "gross_profit": round(profit,2), "margin_percent": round(margin,2)
+            "oil_id": oil_id,
+            "brand": brand,
+            "name": name,
+            "quantity_sold": int(qty or 0),
+            "revenue": round(rev or 0,2),
+            "total_cost": round(cost or 0,2),
+            "cost_per_unit": round(cost_per or 0,2),
+            "profit": round(profit,2),
+            "margin_percent": round(margin,2)
         })
     return result
 
 @router.get("/profit-margins/unified")
 def get_unified_profit_margins(days: int = 30, session: Session = Depends(get_session)):
-    fuel = get_fuel_profit_margins(days, session)
-    oil = get_oil_profit_margins(days, session)
-    fuel_rev = sum(f["revenue"] for f in fuel)
-    fuel_profit = sum(f["gross_profit"] for f in fuel)
-    oil_rev = sum(o["revenue"] for o in oil)
-    oil_profit = sum(o["gross_profit"] for o in oil)
-    total_rev = fuel_rev + oil_rev
-    total_profit = fuel_profit + oil_profit
+    fuel_margins = get_fuel_profit_margins(days=days, session=session)
+    oil_margins = get_oil_profit_margins(days=days, session=session)
+    
+    total_fuel_rev = sum(f["revenue"] for f in fuel_margins)
+    total_fuel_cost = sum(f["total_cost"] for f in fuel_margins)
+    total_fuel_profit = sum(f["profit"] for f in fuel_margins)
+    
+    total_oil_rev = sum(o["revenue"] for o in oil_margins)
+    total_oil_cost = sum(o["total_cost"] for o in oil_margins)
+    total_oil_profit = sum(o["profit"] for o in oil_margins)
+    
+    combined_rev = total_fuel_rev + total_oil_rev
+    combined_cost = total_fuel_cost + total_oil_cost
+    combined_profit = total_fuel_profit + total_oil_profit
+    combined_margin = (combined_profit / combined_rev * 100) if combined_rev else 0
+    
     return {
-        "period_days": days,
+        "fuel": fuel_margins,
+        "oil": oil_margins,
         "summary": {
-            "total_revenue": round(total_rev,2),
-            "total_profit": round(total_profit,2),
-            "total_margin_percent": round((total_profit/total_rev*100) if total_rev else 0,2),
-            "fuel": {"revenue": round(fuel_rev,2), "profit": round(fuel_profit,2), "margin": round((fuel_profit/fuel_rev*100) if fuel_rev else 0,2)},
-            "oil": {"revenue": round(oil_rev,2), "profit": round(oil_profit,2), "margin": round((oil_profit/oil_rev*100) if oil_rev else 0,2)}
-        },
-        "fuel_breakdown": fuel,
-        "oil_breakdown": oil
+            "fuel_revenue": round(total_fuel_rev,2),
+            "fuel_cost": round(total_fuel_cost,2),
+            "fuel_profit": round(total_fuel_profit,2),
+            "fuel_margin_percent": round((total_fuel_profit/total_fuel_rev*100) if total_fuel_rev else 0,2),
+            "oil_revenue": round(total_oil_rev,2),
+            "oil_cost": round(total_oil_cost,2),
+            "oil_profit": round(total_oil_profit,2),
+            "oil_margin_percent": round((total_oil_profit/total_oil_rev*100) if total_oil_rev else 0,2),
+            "total_revenue": round(combined_rev,2),
+            "total_cost": round(combined_cost,2),
+            "total_profit": round(combined_profit,2),
+            "total_margin_percent": round(combined_margin,2)
+        }
     }
 
 @router.get("/revenue/summary")
@@ -242,17 +329,22 @@ def get_revenue_summary(days: int = 30, session: Session = Depends(get_session))
     since = datetime.now() - timedelta(days=days)
     fuel_sql = text("SELECT COALESCE(SUM(total_amount),0), COALESCE(SUM(liters_sold),0), COUNT(*) FROM sale WHERE sold_at >= :since")
     oil_sql = text("SELECT COALESCE(SUM(total_amount),0), COALESCE(SUM(quantity),0), COUNT(*) FROM oil_sale WHERE sold_at >= :since")
-    exp_sql = text("SELECT COALESCE(SUM(amount),0) FROM expense WHERE expense_date >= :since")
-
     f_rev, f_liters, f_cnt = session.execute(fuel_sql, {"since": since}).one()
     o_rev, o_qty, o_cnt = session.execute(oil_sql, {"since": since}).one()
-    exp_total = session.execute(exp_sql, {"since": since}).scalar() or 0
-
+    unified = get_unified_profit_margins(days=days, session=session)
+    summary = unified["summary"]
+    
     return {
         "period_days": days,
-        "fuel": {"revenue": round(f_rev,2), "liters_sold": round(f_liters,2), "transactions": f_cnt},
-        "oil": {"revenue": round(o_rev,2), "quantity_sold": int(o_qty), "transactions": o_cnt},
-        "combined": {"revenue": round(f_rev+o_rev,2), "transactions": f_cnt+o_cnt, "expenses": round(exp_total,2), "net": round((f_rev+o_rev)-exp_total,2)}
+        "fuel": {"revenue": round(f_rev or 0,2), "liters": round(f_liters or 0,2), "transactions": f_cnt},
+        "oil": {"revenue": round(o_rev or 0,2), "quantity": int(o_qty or 0), "transactions": o_cnt},
+        "combined": {
+            "revenue": round((f_rev or 0) + (o_rev or 0),2),
+            "transactions": (f_cnt or 0) + (o_cnt or 0),
+            "cost": summary["total_cost"],
+            "profit": summary["total_profit"],
+            "margin_percent": summary["total_margin_percent"]
+        }
     }
 
 @router.get("/oil/top-selling")

@@ -7,6 +7,17 @@ class ProductType(str, Enum):
     FUEL = "fuel"
     OIL = "oil"
 
+class FuelBatchResponse(BaseModel):
+    id: int
+    fuel_id: int
+    liters_initial: float
+    liters_remaining: float
+    cost_per_liter: float
+    selling_price: float
+    supplier: Optional[str] = None
+    restocked_by: Optional[str] = None
+    restocked_at: datetime
+
 class FuelTypeResponse(BaseModel):
     id: int
     name: str
@@ -22,6 +33,7 @@ class FuelTypeResponse(BaseModel):
     oldest_batch_price: Optional[float] = None
     newest_batch_price: Optional[float] = None
     active_batches: Optional[int] = None
+    batches: List[FuelBatchResponse] = []
 
 class Pump(BaseModel):
     id: int
@@ -44,17 +56,6 @@ class RestockRequest(BaseModel):
 
 class ThresholdUpdate(BaseModel):
     threshold: float
-
-class FuelBatchResponse(BaseModel):
-    id: int
-    fuel_id: int
-    liters_initial: float
-    liters_remaining: float
-    cost_per_liter: float
-    selling_price: float
-    supplier: Optional[str] = None
-    restocked_by: Optional[str] = None
-    restocked_at: datetime
 
 class FifoSaleDetail(BaseModel):
     batch_id: int

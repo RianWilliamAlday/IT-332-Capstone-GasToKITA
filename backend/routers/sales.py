@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select, and_, func
-from ..db.database import get_session, Sale, Fuel, User, Pump, OilProduct, OilSale, FuelBatch, FuelSaleBatch
+from ..db.database import get_session, Sale, Fuel, User, Pump, OilProduct, OilSale, FuelBatch, FuelSaleBatch, Attendant
 from ..models.schemas import (
     SaleCreate, SaleResponse, SaleHistoryItem, SalesHistoryResponse,
     OilSaleCreate, OilSaleResponse, OilSaleHistoryItem, OilSalesHistoryResponse,
@@ -13,7 +13,13 @@ from typing import List, Optional
 
 router = APIRouter(prefix="/api/sales", tags=["Centralized Sales"])
 
-VALID_ATTENDANTS = ["Attendant 1", "Attendant 2", "Attendant 3"]
+def validate_attendant(session, name: str):
+    from..db.database import Attendant
+    att = session.exec(select(Attendant).where(func.lower(Attendant.name) == name.lower(), Attendant.is_active == True)).first()
+    if not att:
+        cnt = session.exec(select(func.count()).select_from(Attendant)).one()
+        if cnt == 0: return True
+        raise HTTPException(400, f"Invalid attendant '{name}'. Add it via /api/attendants")
 
 def get_fifo_batches(session: Session, fuel_id: int):
     return session.exec(select(FuelBatch).where(FuelBatch.fuel_id == fuel_id, FuelBatch.liters_remaining > 0).order_by(FuelBatch.restocked_at.asc(), FuelBatch.id.asc())).all()
@@ -48,8 +54,20 @@ def create_fuel_sale(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    if data.attendant_name not in VALID_ATTENDANTS:
-        raise HTTPException(400, f"Invalid attendant. Must be one of {VALID_ATTENDANTS}")
+    clean_name = data.attendant_name.strip()
+    att = session.exec(
+        select(Attendant).where(
+            func.lower(Attendant.name) == clean_name.lower(),
+            Attendant.is_active == True
+        )
+    ).first()
+
+    if not att:
+        cnt = session.exec(select(func.count()).select_from(Attendant)).one()
+        if cnt != 0:
+            active_names = session.exec(select(Attendant.name).where(Attendant.is_active == True)).all()
+            raise HTTPException(400, f"Invalid attendant '{data.attendant_name}'. Must be one of {active_names}")
+        
     pump = session.get(Pump, data.pump_id)
     if not pump:
         raise HTTPException(404, "Pump not found")
