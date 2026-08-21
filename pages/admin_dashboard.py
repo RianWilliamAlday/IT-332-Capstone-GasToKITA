@@ -110,7 +110,7 @@ def animated_fuel_stat_card(page: ft.Page, auth: dict):
             card.opacity = 0.0
             card.scale = ft.Scale(0.93)
             page.update()
-            await asyncio.sleep(0.😎
+            await asyncio.sleep(0.8)
 
             idx = (idx + 1) % len(fuels_data)
             f = fuels_data[idx]
@@ -326,4 +326,3 @@ def dashboard_page(page: ft.Page, auth: dict):
     load_low_stock()
 
     return ft.Column([header, body, footer], spacing=0, expand=True)
-127.0.0.1

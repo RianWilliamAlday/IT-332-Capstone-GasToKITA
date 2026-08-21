@@ -249,7 +249,6 @@ def analytics_page(page: ft.Page, auth: dict):
         for i, f in enumerate(fuel_data):
             liters = f.get("liters_sold",0)
             pct = liters/total*100
-        # Only show % inside if slice >5%, otherwise legend only
             sections.append(fch.PieChartSection(
                 value=float(liters),
                 title=f"{pct:.0f}%" if pct > 5 else "",
@@ -260,10 +259,10 @@ def analytics_page(page: ft.Page, auth: dict):
                 ft.Container(width=10,height=10,bgcolor=colors[i%len(colors)],border_radius=2),
             ft.Text(f"{f.get('fuel_name')} - {pct:.1f}% ({liters:.0f}L)", size=11)
         ]))
-    return ft.Column([
-        ft.Container(content=fch.PieChart(sections=sections, center_space_radius=35, sections_space=2), height=200),
-        ft.Column(controls=legend, spacing=4)
-    ])
+        return ft.Column([
+            ft.Container(content=fch.PieChart(sections=sections, center_space_radius=35, sections_space=2), height=200),
+            ft.Row(controls=legend, spacing=4)
+        ])
 
     def build_oil_bar(top_oils):
         if not top_oils:
