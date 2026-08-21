@@ -18,7 +18,7 @@ class AttendantUpdate(BaseModel):
     contact: Optional[str] = None
     is_active: Optional[bool] = None
 
-@router.post("/")
+@router.post("/attendants")
 def add_attendant(data: AttendantCreate, session: Session = Depends(get_session)):
     clean = data.name.strip()
     if session.exec(select(Attendant).where(func.lower(Attendant.name) == clean.lower())).first():
@@ -35,16 +35,16 @@ def list_attendants(include_inactive: bool = False, search: str = None, session:
     if search: q = q.where(Attendant.name.ilike(f"%{search}%"))
     return session.exec(q.order_by(Attendant.name)).all()
 
-@router.get("/active")
+@router.get("/attendants/active")
 def list_active(session: Session = Depends(get_session)):
     return session.exec(select(Attendant).where(Attendant.is_active == True).order_by(Attendant.name)).all()
 
-@router.get("/names")
+@router.get("/attendants/names")
 def list_names(session: Session = Depends(get_session)):
     names = session.exec(select(Attendant.name).where(Attendant.is_active == True).order_by(Attendant.name)).all()
     return names if names else ["Attendant 1","Attendant 2","Attendant 3"]
 
-@router.put("/{attendant_id}")
+@router.put("/attendants/{attendant_id}")
 def update_attendant(attendant_id: int, data: AttendantUpdate, session: Session = Depends(get_session)):
     att = session.get(Attendant, attendant_id)
     if not att: raise HTTPException(404, "Not found")
@@ -61,7 +61,7 @@ def update_attendant(attendant_id: int, data: AttendantUpdate, session: Session 
     session.add(att); session.commit(); session.refresh(att)
     return att
 
-@router.patch("/{attendant_id}/rename")
+@router.patch("/attendants/{attendant_id}/rename")
 def rename_attendant(attendant_id: int, new_name: str = Query(...), session: Session = Depends(get_session)):
     att = session.get(Attendant, attendant_id)
     if not att: raise HTTPException(404, "Not found")
@@ -72,14 +72,14 @@ def rename_attendant(attendant_id: int, new_name: str = Query(...), session: Ses
     session.add(att); session.commit(); session.refresh(att)
     return att
 
-@router.patch("/{attendant_id}/deactivate")
+@router.patch("/attendants/{attendant_id}/deactivate")
 def deactivate(attendant_id: int, session: Session = Depends(get_session)):
     att = session.get(Attendant, attendant_id)
     att.is_active = False; att.deactivated_at = datetime.now(); att.updated_at = datetime.now()
     session.add(att); session.commit()
     return {"message": f"{att.name} deactivated"}
 
-@router.delete("/{attendant_id}")
+@router.delete("/attendants/{attendant_id}")
 def remove(attendant_id: int, force: bool = False, session: Session = Depends(get_session)):
     att = session.get(Attendant, attendant_id)
     cnt = session.exec(select(func.count()).select_from(Sale).where(Sale.attendant_name == att.name)).one()
@@ -88,7 +88,7 @@ def remove(attendant_id: int, force: bool = False, session: Session = Depends(ge
     session.delete(att); session.commit()
     return {"message": f"{att.name} removed"}
 
-@router.post("/seed-defaults")
+@router.post("/attendants/seed-defaults")
 def seed(session: Session = Depends(get_session)):
     if session.exec(select(Attendant)).first(): return {"message": "already seeded"}
     for n in ["Attendant 1","Attendant 2","Attendant 3"]:

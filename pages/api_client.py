@@ -214,7 +214,7 @@ def get_active_attendants(auth: dict):
     Returns: [{"id": 1, "name": "Juan", "employee_id": "...", "is_active": True}, ...]
     """
     try:
-        r = requests.get(f"{BASE_URL}/api/attendants/active", headers=_headers(auth), timeout=5)
+        r = requests.get(f"{BASE_URL}/api/employees/attendants/active", headers=_headers(auth), timeout=5)
         if r.status_code == 200:
             data = r.json()
             print(f"[API] /active -> {len(data)} attendants")
@@ -231,7 +231,7 @@ def get_attendant_names(auth: dict) -> list[str]:
     This is what your card UI uses - amount of cards = len(this list)
     """
     try:
-        r = requests.get(f"{BASE_URL}/api/attendants/names", headers=_headers(auth), timeout=5)
+        r = requests.get(f"{BASE_URL}/api/employees/attendants/names", headers=_headers(auth), timeout=5)
         if r.status_code == 200:
             names = r.json()
             print(f"[API] /names -> {names}")
