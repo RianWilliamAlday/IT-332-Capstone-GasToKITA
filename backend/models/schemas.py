@@ -88,6 +88,9 @@ class SaleResponse(BaseModel):
     sold_at: datetime
     fifo_breakdown: Optional[List[FifoSaleDetail]] = None
     is_split_price: bool = False
+    payment_status: Optional[str] = None
+    checkout_url: Optional[str] = None
+    checkout_id: Optional[str] = None
 
 class AttendantSalesSummary(BaseModel):
     attendant_name: str
@@ -155,6 +158,9 @@ class OilSaleResponse(BaseModel):
     sold_at: datetime
     recorded_by: str
     remaining_stock: int
+    payment_status: Optional[str] = None
+    checkout_url: Optional[str] = None
+    checkout_id: Optional[str] = None
 
 class OilSaleHistoryItem(BaseModel):
     id: int

@@ -214,7 +214,7 @@ def get_active_attendants(auth: dict):
     Returns: [{"id": 1, "name": "Juan", "employee_id": "...", "is_active": True}, ...]
     """
     try:
-        r = requests.get(f"{BASE_URL}/api/attendants/active", headers=_headers(auth), timeout=5)
+        r = requests.get(f"{BASE_URL}/api/employees/attendants/active", headers=_headers(auth), timeout=5)
         if r.status_code == 200:
             data = r.json()
             print(f"[API] /active -> {len(data)} attendants")
@@ -231,7 +231,7 @@ def get_attendant_names(auth: dict) -> list[str]:
     This is what your card UI uses - amount of cards = len(this list)
     """
     try:
-        r = requests.get(f"{BASE_URL}/api/attendants/names", headers=_headers(auth), timeout=5)
+        r = requests.get(f"{BASE_URL}/api/employees/attendants/names", headers=_headers(auth), timeout=5)
         if r.status_code == 200:
             names = r.json()
             print(f"[API] /names -> {names}")
@@ -243,3 +243,68 @@ def get_attendant_names(auth: dict) -> list[str]:
         return [a.get("name") or a.get("display_name") for a in active]
 
     return DEFAULT_ATTENDANTS
+
+def create_gcash_dialog_checkout(auth: dict, product_type: str = "fuel", attendant_name: str = "", pump_id: int = None, fuel_id: int = None, liters_sold: float = None, oil_product_id: int = None, quantity: int = None):
+    """
+    Called when user clicks GCash button INSIDE liters/qty dialog
+    This is the endpoint that creates pending sale + PayMongo checkout_url for QR
+    POST /api/payments/gcash/dialog-checkout
+    Returns: {sale_id, checkout_id, checkout_url, total_amount, status}
+    """
+    payload = {
+        "product_type": product_type,
+        "attendant_name": attendant_name
+    }
+    if product_type == "fuel":
+        if pump_id is not None: payload["pump_id"] = pump_id
+        if fuel_id is not None: payload["fuel_id"] = fuel_id
+        if liters_sold is not None: payload["liters_sold"] = float(liters_sold)
+    else:
+        if oil_product_id is not None: payload["oil_product_id"] = int(oil_product_id)
+        if quantity is not None: payload["quantity"] = int(quantity)
+
+    r = requests.post(f"{BASE_URL}/api/payments/gcash/dialog-checkout", json=payload, headers=_headers(auth), timeout=15)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"GCash checkout failed {r.status_code}: {r.text}")
+    return r.json()
+
+def check_gcash_status(auth: dict, checkout_id: str):
+    """
+    Poll this after showing QR. Frontend polls every 3s
+    GET /api/payments/gcash/status/{checkout_id}
+    Returns: {is_paid: bool, sale_id, payment_status}
+    """
+    r = requests.get(f"{BASE_URL}/api/payments/gcash/status/{checkout_id}", headers=_headers(auth), timeout=10)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"GCash status check failed {r.status_code}")
+    return r.json()
+
+def manual_confirm_gcash(auth: dict, sale_id: int, product_type: str = "fuel", gcash_ref: str = None):
+    """
+    Fallback for defense / when ngrok webhook fails. Marks pending sale as paid and deducts FIFO
+    POST /api/payments/gcash/manual-confirm/{sale_id}?product_type=fuel&gcash_ref=xxx
+    """
+    params = {"product_type": product_type}
+    if gcash_ref: params["gcash_ref"] = gcash_ref
+    r = requests.post(f"{BASE_URL}/api/payments/gcash/manual-confirm/{sale_id}", params=params, headers=_headers(auth), timeout=10)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Manual confirm failed {r.status_code}")
+    return r.json()
+
+def create_gcash_checkout_legacy(auth: dict, amount: float, description: str = "GASTOKITA GCash"):
+    """
+    Simple amount-only checkout (if you just want to test PayMongo without creating sale)
+    """
+    payload = {"amount": amount, "description": description}
+    r = requests.post(f"{BASE_URL}/api/payments/gcash/create-checkout", json=payload, headers=_headers(auth), timeout=10)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail)
+    return r.json()
