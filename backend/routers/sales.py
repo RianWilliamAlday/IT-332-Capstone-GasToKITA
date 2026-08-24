@@ -61,13 +61,12 @@ def create_fuel_sale(
             Attendant.is_active == True
         )
     ).first()
-
     if not att:
         cnt = session.exec(select(func.count()).select_from(Attendant)).one()
-        if cnt != 0:
+        if cnt!= 0:
             active_names = session.exec(select(Attendant.name).where(Attendant.is_active == True)).all()
             raise HTTPException(400, f"Invalid attendant '{data.attendant_name}'. Must be one of {active_names}")
-        
+
     pump = session.get(Pump, data.pump_id)
     if not pump:
         raise HTTPException(404, "Pump not found")
@@ -76,36 +75,93 @@ def create_fuel_sale(
         raise HTTPException(404, "Fuel type not found")
 
     ensure_initial_batch(session, fuel)
-
     batches = get_fifo_batches(session, fuel.id)
     total_available = sum(b.liters_remaining for b in batches)
     if total_available < data.liters_sold:
-        raise HTTPException(400, f"Not enough stock (FIFO). Only {total_available:.2f}L available across {len(batches)} batches, requested {data.liters_sold}L")
+        raise HTTPException(400, f"Not enough stock (FIFO). Only {total_available:.2f}L available, requested {data.liters_sold}L")
 
     liters_needed = data.liters_sold
     consumptions = []
     total_amount = 0.0
-
     for batch in batches:
-        if liters_needed <= 0:
-            break
+        if liters_needed <= 0: break
         take = min(batch.liters_remaining, liters_needed)
-        batch.liters_remaining -= take
         total_amount += take * batch.selling_price
         consumptions.append((batch, take, batch.selling_price))
         liters_needed -= take
-        session.add(batch)
-
     if liters_needed > 0.001:
-        raise HTTPException(400, "FIFO consumption failed - not enough batch stock")
+        raise HTTPException(400, "FIFO consumption failed")
 
     weighted_avg_price = total_amount / data.liters_sold if data.liters_sold > 0 else 0
     total_amount = round(total_amount, 2)
+    is_gcash = data.payment_method.lower() == "gcash"
+
+    if is_gcash:
+        sale = Sale(
+            fuel_id=fuel.id,
+            pump_id=data.pump_id,
+            attendant_name=data.attendant_name,
+            recorded_by=current_user.id,
+            liters_sold=data.liters_sold,
+            price_per_liter=round(weighted_avg_price, 2),
+            total_amount=total_amount,
+            amount_paid=0,
+            change_given=0,
+            receipt_no="PENDING",
+            payment_method="gcash",
+            payment_status="pending",
+            paymongo_checkout_id=None
+        )
+        session.add(sale)
+        session.flush()
+        sale.receipt_no = f"F-{sale.sold_at.strftime('%y%m%d')}-{sale.id:06d}-GCASH-PENDING"
+        session.add(sale)
+
+        try:
+            from..services.gcashService import create_gcash_checkout
+            checkout = create_gcash_checkout(
+                amount_php=total_amount,
+                description=f"{fuel.name} {data.liters_sold}L - {clean_name}",
+                reference_id=f"fuel-{sale.id}",
+                metadata={"sale_id": str(sale.id), "attendant": clean_name, "product_type": "fuel"}
+            )
+            sale.paymongo_checkout_id = checkout['checkout_id']
+            session.add(sale)
+            session.commit()
+            session.refresh(sale)
+
+            return SaleResponse(
+                id=sale.id,
+                product_type="fuel",
+                fuel_name=fuel.name,
+                pump_name=pump.name,
+                attendant_name=sale.attendant_name,
+                recorded_by=current_user.name,
+                liters_sold=sale.liters_sold,
+                price_per_liter=sale.price_per_liter,
+                total_amount=sale.total_amount,
+                amount_paid=0,
+                change_given=0,
+                receipt_no=sale.receipt_no,
+                payment_method="gcash",
+                sold_at=sale.sold_at,
+                fifo_breakdown=[],
+                is_split_price=False,
+                payment_status="pending",
+                checkout_url=checkout['checkout_url'],
+                checkout_id=checkout['checkout_id']
+            )
+        except Exception as e:
+            session.rollback()
+            raise HTTPException(500, f"PayMongo GCash failed: {str(e)}")
 
     if data.amount_paid < total_amount - 0.01:
         raise HTTPException(400, f"Amount paid P{data.amount_paid:.2f} is less than due P{total_amount:.2f}")
-    
     change_given = round(data.amount_paid - total_amount, 2)
+
+    for batch, take, price in consumptions:
+        batch.liters_remaining -= take
+        session.add(batch)
 
     sale = Sale(
         fuel_id=fuel.id,
@@ -118,11 +174,11 @@ def create_fuel_sale(
         amount_paid=round(data.amount_paid, 2),
         change_given=change_given,
         receipt_no="TMP",
-        payment_method=data.payment_method
+        payment_method="cash",
+        payment_status="paid"
     )
     session.add(sale)
     session.flush()
-
     sale.receipt_no = f"F-{sale.sold_at.strftime('%y%m%d')}-{sale.id:06d}"
     session.add(sale)
 
@@ -148,7 +204,6 @@ def create_fuel_sale(
     fuel.actual_liters = sum(b.liters_remaining for b in remaining_batches)
     fuel.price = remaining_batches[0].selling_price if remaining_batches else weighted_avg_price
     session.add(fuel)
-
     session.commit()
     session.refresh(sale)
 
@@ -184,16 +239,75 @@ def create_oil_sale(
         raise HTTPException(400, "Quantity must be positive")
     if oil.stock < data.quantity:
         raise HTTPException(400, f"Insufficient stock. Only {oil.stock} left")
+
     attendant = data.attendant_name or current_user.name
     total = round(data.quantity * oil.price, 2)
-    
+    is_gcash = data.payment_method.lower() == "gcash"
+
+    if is_gcash:
+        sale = OilSale(
+            oil_product_id=oil.id,
+            quantity=data.quantity,
+            price_per_unit=oil.price,
+            total_amount=total,
+            amount_paid=0,
+            change_given=0,
+            receipt_no="PENDING",
+            payment_method="gcash",
+            payment_status="pending",
+            paymongo_checkout_id=None,
+            attendant_name=attendant,
+            sold_by=current_user.id
+        )
+        session.add(sale)
+        session.flush()
+        sale.receipt_no = f"O-{sale.sold_at.strftime('%y%m%d')}-{sale.id:06d}-GCASH-PENDING"
+        session.add(sale)
+
+        try:
+            from..services.gcashService import create_gcash_checkout
+            checkout = create_gcash_checkout(
+                amount_php=total,
+                description=f"{oil.brand} {oil.name} x{data.quantity}",
+                reference_id=f"oil-{sale.id}",
+                metadata={"oil_sale_id": str(sale.id), "attendant": attendant, "product_type": "oil"}
+            )
+            sale.paymongo_checkout_id = checkout['checkout_id']
+            session.add(sale)
+            session.commit()
+            session.refresh(sale)
+
+            return OilSaleResponse(
+                id=sale.id,
+                product_type="oil",
+                product_name=f"{oil.brand} {oil.name}",
+                brand=oil.brand,
+                quantity=sale.quantity,
+                price_per_unit=sale.price_per_unit,
+                total_amount=sale.total_amount,
+                amount_paid=0,
+                change_given=0,
+                receipt_no=sale.receipt_no,
+                payment_method="gcash",
+                attendant_name=sale.attendant_name,
+                sold_at=sale.sold_at,
+                recorded_by=current_user.name,
+                remaining_stock=oil.stock,
+                payment_status="pending",
+                checkout_url=checkout['checkout_url'],
+                checkout_id=checkout['checkout_id']
+            )
+        except Exception as e:
+            session.rollback()
+            raise HTTPException(500, f"PayMongo GCash failed: {str(e)}")
+
     if data.amount_paid < total - 0.01:
         raise HTTPException(400, f"Amount paid P{data.amount_paid:.2f} is less than due P{total:.2f}")
-    
+
     change_given = round(data.amount_paid - total, 2)
-    
     oil.stock -= data.quantity
     session.add(oil)
+
     sale = OilSale(
         oil_product_id=oil.id,
         quantity=data.quantity,
@@ -202,7 +316,8 @@ def create_oil_sale(
         amount_paid=round(data.amount_paid, 2),
         change_given=change_given,
         receipt_no="TMP",
-        payment_method=data.payment_method,
+        payment_method="cash",
+        payment_status="paid",
         attendant_name=attendant,
         sold_by=current_user.id
     )
@@ -212,6 +327,7 @@ def create_oil_sale(
     session.add(sale)
     session.commit()
     session.refresh(sale)
+
     return OilSaleResponse(
         id=sale.id,
         product_type="oil",

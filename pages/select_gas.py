@@ -1,6 +1,9 @@
 import flet as ft
 import time
-from pages.api_client import get_fuels, PUMP_MAP
+import threading
+import io
+import base64
+from pages.api_client import get_fuels, PUMP_MAP, create_gcash_dialog_checkout, check_gcash_status, manual_confirm_gcash
 from pages.history import TEXT_WHITE
 
 RED = "#A61E22"
@@ -18,6 +21,20 @@ FALLBACK_PRICES = {
     "Diesel": 50.0,
 }
 
+def generate_qr_base64(url: str):
+    try:
+        import qrcode
+        qr = qrcode.QRCode(version=1, box_size=8, border=2)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception as ex:
+        print(f"[QR] Failed to generate QR: {ex}")
+        return None
+
 def build_pump_page(page: ft.Page, auth: dict):
     page.title = "Fuel Selection"
     page.bgcolor = LIGHT_GRAY
@@ -33,10 +50,8 @@ def build_pump_page(page: ft.Page, auth: dict):
     async def go_logout(e):
             await page.shared_preferences.remove("gastokita.auth_token")
             await page.shared_preferences.remove("gastokita.user_json")
-        
             auth.clear()
             auth.update({"token": None, "role": None, "user": None})
-        
             page.controls.clear()
             from app import main as app_main
             await app_main(page)
@@ -51,6 +66,11 @@ def build_pump_page(page: ft.Page, auth: dict):
     def get_fuel_for_pump(pump_name: str):
         base = pump_name.split()[0]
         return fuel_lookup.get(base)
+
+    def show_snack(message, bgcolor=None):
+        page.snack_bar = ft.SnackBar(content=ft.Text(message), bgcolor=bgcolor)
+        page.snack_bar.open = True
+        page.update()
 
     def create_fuel_card(title, card_color, bar_color):
         fuel = get_fuel_for_pump(title)
@@ -100,8 +120,8 @@ def build_pump_page(page: ft.Page, auth: dict):
             tank_capacity = 8092
 
         lock = {"busy": False}
-        liters_field = ft.TextField(label="Liters", keyboard_type=ft.KeyboardType.NUMBER, width=200, autofocus=True)
-        amount_field = ft.TextField(label="Amount (PHP)", keyboard_type=ft.KeyboardType.NUMBER, width=200)
+        liters_field = ft.TextField(label="Liters", keyboard_type=ft.KeyboardType.NUMBER, width=300, autofocus=True)
+        amount_field = ft.TextField(label="Amount (PHP)", keyboard_type=ft.KeyboardType.NUMBER, width=300)
         error_text = ft.Text("", color=RED, size=12)
 
         def on_liters(e):
@@ -110,10 +130,7 @@ def build_pump_page(page: ft.Page, auth: dict):
                 l = float(liters_field.value or 0)
                 lock["busy"] = True
                 amount_field.value = f"{l * price:.2f}" if l > 0 else ""
-                if l > stock:
-                    error_text.value = f"Only {stock:.1f}L left in tank"
-                else:
-                    error_text.value = ""
+                error_text.value = f"Only {stock:.1f}L left in tank" if l > stock else ""
                 page.update()
             except:
                 pass
@@ -127,10 +144,7 @@ def build_pump_page(page: ft.Page, auth: dict):
                 lock["busy"] = True
                 liters = a / price if price else 0
                 liters_field.value = f"{liters:.3f}" if a > 0 else ""
-                if liters > stock:
-                    error_text.value = f"Only {stock:.1f}L left"
-                else:
-                    error_text.value = ""
+                error_text.value = f"Only {stock:.1f}L left" if liters > stock else ""
                 page.update()
             except:
                 pass
@@ -143,7 +157,7 @@ def build_pump_page(page: ft.Page, auth: dict):
         def close_dlg(e=None):
             page.pop_dialog()
 
-        def confirm_dlg(e=None):
+        def confirm_cash_dlg(e=None):
             try:
                 l = float(liters_field.value or 0)
                 a = float(amount_field.value or 0)
@@ -151,11 +165,8 @@ def build_pump_page(page: ft.Page, auth: dict):
                     error_text.value = "Enter liters or amount"
                     page.update()
                     return
-                if l <= 0:
-                    l = a / price
-                if a <= 0:
-                    a = l * price
-
+                if l <= 0: l = a / price
+                if a <= 0: a = l * price
                 if l > stock:
                     error_text.value = f"Insufficient stock ({stock:.1f}L)"
                     page.update()
@@ -170,11 +181,169 @@ def build_pump_page(page: ft.Page, auth: dict):
                     "liters": l,
                     "pump_id": PUMP_MAP.get(fuel_pump_name, 1),
                     "fuel_name": fuel_pump_name.split()[0],
-                    "type": "fuel"
+                    "type": "fuel",
+                    "payment_method": "cash"
                 }
                 page.controls.clear()
                 page.add(build_pos_page(page, auth, tx))
                 page.update()
+            except Exception as ex:
+                error_text.value = f"Invalid: {ex}"
+                page.update()
+
+        def gcash_qr_dialog(gcash_data: dict):
+            total_amt = float(gcash_data.get("total_amount", 0))
+            sale_id_captured = gcash_data.get("sale_id")
+            checkout_id_captured = gcash_data.get("checkout_id")
+            checkout_url = gcash_data.get("checkout_url", "")
+            liters_captured = float(liters_field.value or 0)
+
+            qr_data_uri = generate_qr_base64(checkout_url)
+            status_text = ft.Text("Waiting for GCash payment...", color="#007CFF", size=12, weight=ft.FontWeight.BOLD)
+            polling = {"active": True}
+
+            if qr_data_uri:
+                qr_image = ft.Image(src=qr_data_uri, width=220, height=220, fit=ft.BoxFit.CONTAIN)
+            else:
+                qr_image = ft.Text("QR failed, use link below", size=10)
+
+            checkout_link = ft.TextButton(
+                content="Open GCash Checkout",
+                url=checkout_url,
+                style=ft.ButtonStyle(color="#007CFF")
+            )
+
+            def close_all(e=None):
+                polling["active"] = False
+                page.pop_dialog()
+
+            def manual_confirm(e=None):
+                try:
+                    result = manual_confirm_gcash(auth, sale_id_captured, product_type="fuel")
+                    status_text.value = f"Manually confirmed: {result.get('receipt_no','PAID')}"
+                    page.update()
+                    time.sleep(1)
+                    polling["active"] = False
+                    page.pop_dialog()
+
+                    from pages.change import build_change_page
+                    tx = {
+                        "label": fuel_pump_name,
+                        "details": f"GCash PAID - ₱{total_amt:.2f}",
+                        "total": total_amt,
+                        "liters": liters_captured,
+                        "pump_id": PUMP_MAP.get(fuel_pump_name, 1),
+                        "fuel_name": fuel_pump_name.split()[0],
+                        "type": "fuel",
+                        "payment_method": "gcash",
+                        "sale_id": sale_id_captured,
+                        "is_paid": True
+                    }
+                    page.controls.clear()
+                    page.add(build_change_page(page, auth, tx, paid=total_amt, change=0, sale=result, tx_type="fuel"))
+                    page.update()
+                except Exception as ex:
+                    status_text.value = f"Confirm failed: {ex}"
+                    page.update()
+
+            def auto_poll():
+                while polling["active"]:
+                    time.sleep(3)
+                    try:
+                        status = check_gcash_status(auth, checkout_id_captured)
+                        if status.get("is_paid"):
+                            def on_paid():
+                                status_text.value = "Paid! Redirecting..."
+                                page.update()
+                                polling["active"] = False
+                                page.pop_dialog()
+                                from pages.change import build_change_page
+                                tx = {
+                                    "label": fuel_pump_name,
+                                    "details": f"GCash PAID - ₱{total_amt:.2f}",
+                                    "total": total_amt,
+                                    "liters": liters_captured,
+                                    "pump_id": PUMP_MAP.get(fuel_pump_name, 1),
+                                    "fuel_name": fuel_pump_name.split()[0],
+                                    "type": "fuel",
+                                    "payment_method": "gcash",
+                                    "sale_id": status.get("sale_id") or sale_id_captured,
+                                    "is_paid": True
+                                }
+                                page.controls.clear()
+                                page.add(build_change_page(page, auth, tx, paid=total_amt, change=0, sale={"sale_id": tx["sale_id"]}, tx_type="fuel"))
+                                page.update()
+                            page.run_thread(on_paid)
+                            break
+                    except Exception as ex:
+                        print(f"[GCash Poll] {ex}")
+
+            qr_dialog = ft.AlertDialog(
+                modal=True,
+                title=ft.Text(f"GCash - ₱{total_amt:.2f}", weight=ft.FontWeight.BOLD),
+                content=ft.Column(tight=True, spacing=12, scroll=ft.ScrollMode.AUTO, controls=[
+                    ft.Text(f"{fuel_pump_name}", size=12, color="grey"),
+                    ft.Container(alignment=ft.Alignment.CENTER, content=qr_image),
+                    checkout_link,
+                    status_text
+                ]),
+                actions=[
+                    ft.TextButton("Cancel", on_click=close_all),
+                    ft.TextButton("Manual Confirm", on_click=manual_confirm),
+                ],
+            )
+            page.show_dialog(qr_dialog)
+            threading.Thread(target=auto_poll, daemon=True).start()
+
+        def confirm_gcash_dlg(e=None):
+            try:
+                l = float(liters_field.value or 0)
+                a = float(amount_field.value or 0)
+                if l <= 0 and a <= 0:
+                    error_text.value = "Enter liters or amount"
+                    page.update()
+                    return
+                if l <= 0: l = a / price
+                if l > stock:
+                    error_text.value = f"Insufficient stock ({stock:.1f}L)"
+                    page.update()
+                    return
+                
+                attendant_name = auth.get("selected_attendant") or auth.get("user", {}).get("name") or "Attendant 1"
+
+                page.pop_dialog()
+                loading_dialog = ft.AlertDialog(
+                    modal=True,
+                    title=ft.Text("Creating GCash Checkout..."),
+                    content=ft.Column(tight=True, controls=[ft.ProgressRing(), ft.Text("Contacting PayMongo...")])
+                )
+                page.show_dialog(loading_dialog)
+
+                def do_create():
+                    try:
+                        pump_id = PUMP_MAP.get(fuel_pump_name, 1)
+                        gcash_data = create_gcash_dialog_checkout(
+                            auth,
+                            product_type="fuel",
+                            attendant_name=attendant_name,
+                            pump_id=pump_id,
+                            liters_sold=l,
+                        )
+                        def show_qr():
+                            page.pop_dialog()
+                            gcash_qr_dialog(gcash_data)
+                        page.run_thread(show_qr)
+                    except Exception as ex:
+                        error_msg = str(ex)
+                        print(f"GCash error: {error_msg}")
+                        def show_error():
+                            page.pop_dialog()
+                            show_snack(ft.SnackBar(ft.Text(f"GCash failed: {error_msg}"), bgcolor=RED))
+                            open_fuel_dialog(fuel_pump_name)
+                        page.run_thread(show_error)
+
+                threading.Thread(target=do_create, daemon=True).start()
+
             except Exception as ex:
                 error_text.value = f"Invalid: {ex}"
                 page.update()
@@ -191,7 +360,19 @@ def build_pump_page(page: ft.Page, auth: dict):
             ]),
             actions=[
                 ft.TextButton("Cancel", on_click=close_dlg),
-                ft.FilledButton("Confirm", style=ft.ButtonStyle(bgcolor=RED, color="white"), on_click=confirm_dlg),
+                ft.FilledButton("Confirm", style=ft.ButtonStyle(bgcolor=RED, color="white"), on_click=confirm_cash_dlg),
+                ft.Button(
+                    style=ft.ButtonStyle(bgcolor="#007CFF", color="white"),
+                    on_click=confirm_gcash_dlg,
+                    content=ft.Row(
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        tight=True,
+                        controls=[
+                            ft.Image(src="assets/gcash_logo.png", width=20, height=20, fit=ft.BoxFit.CONTAIN, error_content=ft.Icon(ft.Icons.PAYMENT, size=16, color="white")),
+                            ft.Text("GCash"),
+                        ],
+                    ),
+                ),
             ],
         )
         page.show_dialog(dialog)

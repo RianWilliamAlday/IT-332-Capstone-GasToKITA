@@ -1,6 +1,9 @@
 import flet as ft
 import time
-from pages.api_client import get_oils
+import threading
+import io
+import base64
+from pages.api_client import get_oils, create_gcash_dialog_checkout, check_gcash_status, manual_confirm_gcash
 from pages.history import TEXT_WHITE
 
 RED = "#A61E22"
@@ -53,6 +56,21 @@ def oil_card(oil: dict, on_click):
             ]
         ),
     )
+
+
+def generate_qr_base64(url: str):
+    try:
+        import qrcode
+        qr = qrcode.QRCode(version=1, box_size=8, border=2)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception as ex:
+        print(f"[QR] Failed to generate QR: {ex}")
+        return None
 
 def build_oil_page(page: ft.Page, auth: dict):
     page.title = "Oil Selection"
@@ -137,6 +155,160 @@ def build_oil_page(page: ft.Page, auth: dict):
                 error_text.value = f"Invalid: {ex}"
                 page.update()
 
+        def gcash_qr_dialog(gcash_data: dict):
+            total_amt = float(gcash_data.get("total_amount", 0))
+            sale_id_captured = gcash_data.get("sale_id")
+            checkout_id_captured = gcash_data.get("checkout_id")
+            checkout_url = gcash_data.get("checkout_url", "")
+            qty_captured = int(float(qty_field.value or 0))
+
+            qr_data_uri = generate_qr_base64(checkout_url)
+            status_text = ft.Text("Waiting for GCash payment...", color="#007CFF", size=12, weight=ft.FontWeight.BOLD)
+            polling = {"active": True}
+
+            if qr_data_uri:
+                qr_image = ft.Image(src=qr_data_uri, width=220, height=220, fit=ft.BoxFit.CONTAIN)
+            else:
+                qr_image = ft.Text("QR failed, use link below", size=10)
+
+            checkout_link = ft.TextButton(
+                content="Open GCash Checkout",
+                url=checkout_url,
+                style=ft.ButtonStyle(color="#007CFF")
+            )
+
+            def close_all(e=None):
+                polling["active"] = False
+                page.pop_dialog()
+
+            def manual_confirm(e=None):
+                try:
+                    result = manual_confirm_gcash(auth, sale_id_captured, product_type="oil")
+                    status_text.value = f"Manually confirmed: {result.get('receipt_no','PAID')}"
+                    page.update()
+                    time.sleep(1)
+                    polling["active"] = False
+                    page.pop_dialog()
+
+                    from pages.change import build_change_page
+                    tx = {
+                        "label": oil_name,
+                        "details": f"GCash PAID - ₱{total_amt:.2f}",
+                        "total": total_amt,
+                        "quantity": qty_captured,
+                        "oil_id": oil_id,
+                        "type": "oil",
+                        "payment_method": "gcash",
+                        "sale_id": sale_id_captured,
+                        "is_paid": True
+                    }
+                    page.controls.clear()
+                    page.add(build_change_page(page, auth, tx, paid=total_amt, change=0, sale=result, tx_type="oil"))
+                    page.update()
+                except Exception as ex:
+                    status_text.value = f"Confirm failed: {ex}"
+                    page.update()
+
+            def auto_poll():
+                while polling["active"]:
+                    time.sleep(3)
+                    try:
+                        status = check_gcash_status(auth, checkout_id_captured)
+                        if status.get("is_paid"):
+                            def on_paid():
+                                status_text.value = "Paid! Redirecting..."
+                                page.update()
+                                polling["active"] = False
+                                page.pop_dialog()
+                                from pages.change import build_change_page
+                                tx = {
+                                    "label": oil_name,
+                                    "details": f"GCash PAID - ₱{total_amt:.2f}",
+                                    "total": total_amt,
+                                    "quantity": qty_captured,
+                                    "oil_id": oil_id,
+                                    "type": "oil",
+                                    "payment_method": "gcash",
+                                    "sale_id": status.get("sale_id") or sale_id_captured,
+                                    "is_paid": True
+                                }
+                                page.controls.clear()
+                                page.add(build_change_page(page, auth, tx, paid=total_amt, change=0, sale={"sale_id": tx["sale_id"]}, tx_type="oil"))
+                                page.update()
+                            page.run_thread(on_paid)
+                            break
+                    except Exception as ex:
+                        print(f"[GCash Poll] {ex}")
+
+            qr_dialog = ft.AlertDialog(
+                modal=True,
+                title=ft.Text(f"GCash - ₱{total_amt:.2f}", weight=ft.FontWeight.BOLD),
+                content=ft.Column(tight=True, spacing=12, scroll=ft.ScrollMode.AUTO, controls=[
+                    ft.Text(oil_name, size=12, color="grey"),
+                    ft.Container(alignment=ft.Alignment.CENTER, content=qr_image),
+                    checkout_link,
+                    status_text
+                ]),
+                actions=[
+                    ft.TextButton("Cancel", on_click=close_all),
+                    ft.TextButton("Manual Confirm", on_click=manual_confirm),
+                ],
+            )
+            page.show_dialog(qr_dialog)
+            threading.Thread(target=auto_poll, daemon=True).start()
+
+        def confirm_gcash_dlg(e=None):
+            try:
+                qty = int(float(qty_field.value or 0))
+                if qty <= 0:
+                    error_text.value = "Enter valid quantity"
+                    page.update()
+                    return
+                if qty > stock:
+                    error_text.value = "Insufficient stock"
+                    page.update()
+                    return
+
+                attendant_name = auth.get("selected_attendant") or auth.get("user", {}).get("name") or "Attendant 1"
+
+                page.pop_dialog()
+                loading_dialog = ft.AlertDialog(
+                    modal=True,
+                    title=ft.Text("Creating GCash Checkout..."),
+                    content=ft.Column(tight=True, controls=[ft.ProgressRing(), ft.Text("Contacting PayMongo...")])
+                )
+                page.show_dialog(loading_dialog)
+
+                def do_create():
+                    try:
+                        gcash_data = create_gcash_dialog_checkout(
+                            auth,
+                            product_type="oil",
+                            attendant_name=attendant_name,
+                            oil_product_id=oil_id,
+                            quantity=qty,
+                        )
+                        def show_qr():
+                            page.pop_dialog()
+                            gcash_qr_dialog(gcash_data)
+                        page.run_thread(show_qr)
+                    except Exception as ex:
+                        error_msg = str(ex)
+                        print(f"GCash error: {error_msg}")
+                        def show_error():
+                            page.pop_dialog()
+                            page.snack_bar = ft.SnackBar(content=ft.Text(f"GCash failed: {error_msg}"), bgcolor=RED)
+                            page.snack_bar.open = True
+                            open_oil_dialog(oil)
+                            page.update()
+                        page.run_thread(show_error)
+
+                threading.Thread(target=do_create, daemon=True).start()
+
+            except Exception as ex:
+                error_text.value = f"Invalid: {ex}"
+                page.update()
+
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text(oil_name, weight=ft.FontWeight.BOLD),
@@ -161,6 +333,17 @@ def build_oil_page(page: ft.Page, auth: dict):
             actions=[
                 ft.TextButton("Cancel", on_click=close_dlg),
                 ft.FilledButton("Confirm", style=ft.ButtonStyle(bgcolor=RED, color="white"), on_click=confirm_dlg),
+                ft.Button(
+                    style=ft.ButtonStyle(bgcolor="#007CFF", color="white"),
+                    on_click=confirm_gcash_dlg,
+                    content=ft.Row(
+                        alignment=ft.MainAxisAlignment.CENTER, tight=True,
+                        controls=[
+                            ft.Image(src="assets/gcash_logo.png", width=20, height=20, fit=ft.BoxFit.CONTAIN, error_content=ft.Icon(ft.Icons.PAYMENT, size=16, color="white")),
+                            ft.Text("GCash"),
+                        ],
+                    ),
+                ),
             ],
         )
         page.show_dialog(dialog)
