@@ -119,7 +119,7 @@ def history_page(page: ft.Page, auth: dict):
     def data_cell(text, width, bold=False, color="#111111"): 
         return ft.Container(content=ft.Text(text, size=12, color=color, weight=ft.FontWeight.BOLD if bold else ft.FontWeight.NORMAL, overflow=ft.TextOverflow.ELLIPSIS), width=width, padding=ft.Padding.symmetric(horizontal=8, vertical=12))
     def fuel_badge(label: str):
-        bg = "  C62828" if label=="fuel" else "#6A1B9A"
+        bg = "#C62828" if label=="fuel" else "#6A1B9A"
         icon = ft.Icons.LOCAL_GAS_STATION if label=="fuel" else ft.Icons.SHOPPING_CART
         return ft.Container(content=ft.Row(controls=[ft.Icon(icon, size=12, color="white"), ft.Text(label, size=11, color="white", weight=ft.FontWeight.BOLD)], spacing=4, tight=True), bgcolor=bg, border_radius=12, padding=ft.Padding.symmetric(horizontal=10, vertical=4))
 

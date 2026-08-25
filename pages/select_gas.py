@@ -257,6 +257,7 @@ def build_pump_page(page: ft.Page, auth: dict):
                                 page.update()
                                 polling["active"] = False
                                 page.pop_dialog()
+                                result = manual_confirm_gcash(auth, sale_id_captured, product_type="fuel")
                                 from pages.change import build_change_page
                                 tx = {
                                     "label": fuel_pump_name,
@@ -271,7 +272,7 @@ def build_pump_page(page: ft.Page, auth: dict):
                                     "is_paid": True
                                 }
                                 page.controls.clear()
-                                page.add(build_change_page(page, auth, tx, paid=total_amt, change=0, sale={"sale_id": tx["sale_id"]}, tx_type="fuel"))
+                                page.add(build_change_page(page, auth, tx, paid=total_amt, change=0, sale=result, tx_type="fuel"))
                                 page.update()
                             page.run_thread(on_paid)
                             break

@@ -157,7 +157,7 @@ def build_oil_page(page: ft.Page, auth: dict):
 
         def gcash_qr_dialog(gcash_data: dict):
             total_amt = float(gcash_data.get("total_amount", 0))
-            sale_id_captured = gcash_data.get("sale_id")
+            sale_id_captured = gcash_data.get("oil_sale_id") or gcash_data.get("sale_id")
             checkout_id_captured = gcash_data.get("checkout_id")
             checkout_url = gcash_data.get("checkout_url", "")
             qty_captured = int(float(qty_field.value or 0))
@@ -220,6 +220,9 @@ def build_oil_page(page: ft.Page, auth: dict):
                                 page.update()
                                 polling["active"] = False
                                 page.pop_dialog()
+
+                                result = manual_confirm_gcash(auth, sale_id_captured, product_type="oil")
+
                                 from pages.change import build_change_page
                                 tx = {
                                     "label": oil_name,
@@ -229,12 +232,12 @@ def build_oil_page(page: ft.Page, auth: dict):
                                     "oil_id": oil_id,
                                     "type": "oil",
                                     "payment_method": "gcash",
-                                    "sale_id": status.get("sale_id") or sale_id_captured,
+                                    "sale_id": sale_id_captured,
                                     "is_paid": True
                                 }
                                 page.controls.clear()
-                                page.add(build_change_page(page, auth, tx, paid=total_amt, change=0, sale={"sale_id": tx["sale_id"]}, tx_type="oil"))
-                                page.update()
+                                page.add(build_change_page(page, auth, tx, paid=total_amt, change=0, sale=result, tx_type="oil"))
+                            page.update()
                             page.run_thread(on_paid)
                             break
                     except Exception as ex:
