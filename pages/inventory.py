@@ -4,7 +4,7 @@ import time, threading, traceback
 from pages.api_client import (
     get_fuels, get_oils, restock_fuel, update_fuel_price,
     dipstick_convert, sync_dipstick, create_oil_product, restock_oil,
-    update_oil
+    update_oil, update_fuel_threshold
 )
 
 DARK_RED = "#8B0000"
@@ -50,7 +50,7 @@ def close_dialog_compat(page: ft.Page, dialog=None):
     except: pass
 
 def inventory_page(page: ft.Page, auth: dict):
-    page.title = "U-FUEL - Inventory Management"
+    page.title = "Inventory"
     page.bgcolor = LIGHT_BG
     page.padding = 0
 
@@ -143,12 +143,60 @@ def inventory_page(page: ft.Page, auth: dict):
         percent, dipstick, threshold, price = fuel["display_percentage"], fuel.get("display_cm", 0), fuel["threshold"], fuel["price"]
         progress = min(1.0, percent / 100.0)
 
-        def open_restock(e):
-            remaining = max(0, round(capacity - current, 2))
-            liters_field = ft.TextField(label="Liters to add", width=200, keyboard_type=ft.KeyboardType.NUMBER, autofocus=True)
-            cost_field = ft.TextField(label="Total cost", width=200, value="0", keyboard_type=ft.KeyboardType.NUMBER)
+        def open_threshold(e):
+            tf = ft.TextField(
+                label="Reorder threshold (L)", 
+                width=200, 
+                value=str(int(threshold)), 
+                keyboard_type=ft.KeyboardType.NUMBER, 
+                autofocus=True
+            )
             err = ft.Text("", size=11, color=DARK_RED)
             
+            def do_save(ev):
+                try:
+                    new_t = float(tf.value or 0)
+                    if new_t <= 0:
+                        err.value = "Threshold must be > 0"; err.update(); return
+                    if new_t >= capacity:
+                        err.value = f"Must be less than capacity ({capacity:,}L)"; err.update(); return
+                    
+                    close_dialog_compat(page)
+                    def bg():
+                        time.sleep(0.1)
+                        try:
+                            update_fuel_threshold(auth, fid, new_t)
+                            show_snack(f"{name} threshold → {new_t:,.0f}L", GREEN)
+                            auth.pop("fuels_cache", None)
+                            load_fuels()
+                        except Exception as ex:
+                            show_snack(str(ex), DARK_RED)
+                    page.run_thread(bg)
+                except Exception as ex:
+                    err.value=str(ex); err.update()
+
+            dialog = ft.AlertDialog(
+                title=ft.Text(f"Update {name} Threshold"),
+                content=ft.Column(tight=True, controls=[
+                    ft.Text(f"Current: {threshold:,.0f}L / {capacity:,}L", size=12),
+                    tf, 
+                    ft.Text("When stock hits this level, status becomes Low Stock", size=10, italic=True),
+                    err
+                ]),
+                actions=[
+                    ft.TextButton("Cancel", on_click=lambda e: close_dialog_compat(page)), 
+                    ft.FilledButton("Save", bgcolor=DARK_RED, color="white", on_click=do_save)
+                ]
+            )
+            open_dialog_compat(page, dialog)
+
+        def open_restock(e):
+            remaining = max(0, round(capacity - current, 2))
+            liters_field = ft.TextField(label="Liters to add", width=280, keyboard_type=ft.KeyboardType.NUMBER, autofocus=True)
+            cost_field = ft.TextField(label="Total cost", width=280, value="0", keyboard_type=ft.KeyboardType.NUMBER)
+            price_field = ft.TextField(label="New selling price ₱ / L", width=280, value=str(price), keyboard_type=ft.KeyboardType.NUMBER)
+            err = ft.Text("", size=11, color=DARK_RED)
+
             def fill_full(ev):
                 if remaining <= 0:
                     err.value = "Tank is already full"; err.update(); return
@@ -159,36 +207,41 @@ def inventory_page(page: ft.Page, auth: dict):
             def do_restock(ev):
                 try:
                     liters = float(liters_field.value or 0)
-                    if liters <= 0: 
-                        err.value="Enter liters"; err.update(); return
-                    if liters > remaining and remaining > 0:
-                        err.value=f"Exceeds capacity. Max is {remaining:,.0f}L"; err.update(); return
+                    cost_val = float(cost_field.value or 0)
+                    s_price = float(price_field.value or 0)
+                    if liters <= 0:
+                        err.value="Enter liters > 0"; err.update(); return
+                    if cost_val < 0:
+                        err.value="Cost can't be negative"; err.update(); return
+                    if s_price <= 0:
+                        err.value="Selling price must be > 0"; err.update(); return
                     close_dialog_compat(page)
                     def bg():
                         time.sleep(0.1)
                         try:
-                            restock_fuel(auth, fid, liters, float(cost_field.value or 0))
-                            show_snack(f"{name} restocked +{liters}L", GREEN)
-                            auth.pop("fuels_cache", None)  
+                            restock_fuel(auth, fid, liters_added=liters, cost=cost_val, selling_price=s_price)
+                            show_snack(f"{name} restocked +{liters}L @ ₱{s_price:.2f}", GREEN)
+                            auth.pop("fuels_cache", None)
                             load_fuels()
                         except Exception as ex: show_snack(str(ex), DARK_RED)
                     page.run_thread(bg)
-                except Exception as ex: 
+                except Exception as ex:
                     err.value=str(ex); err.update()
 
             dialog = ft.AlertDialog(
                 title=ft.Text(f"Restock {name}"),
                 content=ft.Column(tight=True, spacing=10, controls=[
                     ft.Text(f"Current: {current:,.0f}L / {capacity:,}L", size=12),
-                    ft.Text(f"Space left: {remaining:,.0f}L to full", size=12, weight=ft.FontWeight.BOLD, color=DARK_RED) if remaining > 0 else ft.Text("Tank is already at full capacity!", size=12, weight=ft.FontWeight.BOLD, color=GREEN),
+                    ft.Text(f"Space left: {remaining:,.0f}L", size=12, weight=ft.FontWeight.BOLD, color=DARK_RED),
                     liters_field,
                     ft.OutlinedButton(content=f"FILL TO FULL - {remaining:,.0f}L", icon=ft.Icons.WATER_DROP, on_click=fill_full) if remaining > 0 else ft.Container(),
-                    cost_field, 
+                    cost_field,
+                    price_field,
                     err
                 ]),
                 actions=[
-                    ft.TextButton("Cancel", on_click=lambda e: close_dialog_compat(page)), 
-                    ft.FilledButton("Restock", bgcolor=DARK_RED, color="white", on_click=do_restock)
+                        ft.TextButton("Cancel", on_click=lambda e: close_dialog_compat(page)),
+                        ft.FilledButton("Restock", bgcolor=DARK_RED, color="white", on_click=do_restock)
                 ]
             )
             open_dialog_compat(page, dialog)
@@ -213,23 +266,166 @@ def inventory_page(page: ft.Page, auth: dict):
             dialog = ft.AlertDialog(title=ft.Text(f"Update {name} Price"), content=ft.Column(tight=True, controls=[pf, err]), actions=[ft.TextButton("Cancel", on_click=lambda e: close_dialog_compat(page)), ft.FilledButton("Save", bgcolor=DARK_RED, color="white", on_click=do_save)])
             open_dialog_compat(page, dialog)
 
+        capacity = fuel["tank_capacity"]
+        raw_batches = fuel.get("batches", [])
+        if raw_batches and raw_batches[0].get("id", 0) > raw_batches[-1].get("id", 0):
+            batches = list(reversed(raw_batches))
+        else:
+            batches = raw_batches
+        threshold_pct = (threshold / capacity * 100) if capacity else 0
+        threshold_align_x = max(-1, min(1, threshold_pct / 50 - 1))
+        is_below = current <= threshold
+        base_price = fuel.get("price", 0)
+
+        if batches and len(batches) > 0:
+            active_price = float(batches[0].get("selling_price", batches[0].get("price", base_price)))
+        else:
+            active_price = float(base_price)
+        bar_segments = []
+        FIFO_COLORS = ["#8B0000", "#A82A2A", "#C94A4A", "#E07A7A"]
+
+        if batches:
+            for i, b in enumerate(batches):
+                liters = float(b.get("remaining_liters", b.get("current_liters", b.get("liters_remaining", b.get("liters", b.get("quantity", 0))))))
+                if liters <= 0:
+                    continue
+                batch_price = float(b.get("selling_price", b.get("price", price)))
+                
+                bar_segments.append(
+                    ft.Container(
+                        expand=int(liters) if liters >= 1 else 1,
+                        height=18,
+                        bgcolor=FIFO_COLORS[i % len(FIFO_COLORS)],
+                        tooltip=f"Batch {i+1} - {liters:,.0f}L @ ₱{price:.2f}",
+                        alignment=ft.Alignment.CENTER,
+                        border_radius=ft.BorderRadius.only(
+                            top_left=10 if i == 0 else 0, bottom_left=10 if i == 0 else 0
+                        ),
+                        content=ft.Text(
+                            f"₱{batch_price:.2f}",
+                            size=9, color=WHITE, weight=ft.FontWeight.BOLD
+                        ) if capacity and (liters / capacity) > 0.5 else None
+                    )
+                )
+            empty_liters = max(0, capacity - current)
+            if empty_liters > 0:
+                bar_segments.append(
+                    ft.Container(
+                        expand=int(empty_liters) if empty_liters >= 1 else 1,
+                        height=18,
+                        bgcolor="#E5E7EB",
+                        border_radius=ft.BorderRadius.only(top_right=10, bottom_right=10)
+                    )
+                )
+        else:
+            bar_segments = [
+                ft.Container(expand=int(percent), height=18, bgcolor=DARK_RED, border_radius=6),
+                ft.Container(expand=int(100 - percent), height=18, bgcolor="#E5E7EB", border_radius=6) if percent < 100 else ft.Container()
+            ]
+            
+        legend_items = []
+        if batches and len(batches) > 1:
+            for i, b in enumerate(batches[:4]):
+                l_val = float(b.get("remaining_liters", b.get("current_liters", b.get("liters_remaining", b.get("liters", b.get("quantity", 0))))))
+                p_val = float(b.get("selling_price", b.get("price", 0)))
+                legend_items.append(
+                    ft.Row([
+                        ft.Container(width=8, height=8, bgcolor=FIFO_COLORS[i % len(FIFO_COLORS)], border_radius=4),
+                        ft.Text(f"{l_val:,.0f}L @ ₱{p_val:.2f}", size=10, color=BLACK)
+                    ], spacing=4, tight=True)
+                )
+
+        progress_with_threshold = ft.Column(spacing=6, controls=[
+            ft.Row([
+                ft.Text("Current Level", size=12, color=BLACK, weight=ft.FontWeight.W_600),
+                ft.Row([
+                    ft.Text(f"{current:,.0f} L ({percent:.0f}%)", size=12, weight=ft.FontWeight.BOLD),
+                    ft.Text(f"• {len(batches)} batches", size=10, color="#6B7280") if batches else ft.Container()
+                ], spacing=6)
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+
+            ft.Stack(
+                height=26,
+                controls=[
+                    ft.Container(top=4, left=0, right=0, content=ft.Row(spacing=1, controls=bar_segments)),
+                    ft.Container(
+                        alignment=ft.Alignment(threshold_align_x, 0),
+                        content=ft.Container(
+                            ink=True, on_click=open_threshold,
+                            tooltip=f"Threshold {threshold:,.0f}L - tap to edit",
+                            content=ft.Column(spacing=0, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+                                ft.Text("▼", size=10, color=ORANGE if is_below else BLACK, weight=ft.FontWeight.BOLD),
+                                ft.Container(width=3, height=20, bgcolor=ORANGE if is_below else BLACK, border_radius=2)
+                            ])
+                        )
+                    )
+                ]
+            ),
+            
+            ft.Row(legend_items, spacing=16, wrap=True) if legend_items else ft.Container(),
+
+            ft.Row([
+                ft.Text("0L", size=9, color="#9CA3AF"),
+                ft.Text(f"Threshold {threshold_pct:.0f}%", size=9, color=ORANGE if is_below else "#6B7280", weight=ft.FontWeight.BOLD),
+                ft.Text(f"{capacity:,}L", size=9, color="#9CA3AF"),
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+        ])
+
         return ft.Container(
             bgcolor=WHITE, border_radius=10, padding=20, shadow=ft.BoxShadow(blur_radius=6, color="#00000012", offset=ft.Offset(0, 2)),
             content=ft.Column([
-                ft.Row([ft.Column([ft.Text(name, size=16, weight=ft.FontWeight.BOLD, color=BLACK), ft.Text(f"Capacity: {capacity:,} L", size=12, color=BLACK)], spacing=2),
-                        ft.Container(content=ft.Text("RESTOCK", size=11, color=DARK_RED, weight=ft.FontWeight.BOLD), border=ft.Border.all(1, DARK_RED), border_radius=6, padding=ft.Padding.symmetric(horizontal=12, vertical=6), ink=True, on_click=open_restock)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Row([
+                    ft.Column([
+                        ft.Text(name, size=16, weight=ft.FontWeight.BOLD, color=BLACK),
+                        ft.Text(f"Capacity: {capacity:,.1f} L", size=12, color=BLACK)
+                    ], spacing=2),
+                    ft.Container(
+                        content=ft.Text("RESTOCK", size=11, color=DARK_RED, weight=ft.FontWeight.BOLD),
+                        border=ft.Border.all(1, DARK_RED), border_radius=6,
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+                        ink=True, on_click=open_restock
+                    )
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Container(height=12),
                 ft.Row([
-                    ft.Container(expand=True, content=ft.Column([
-                        ft.Row([ft.Text("Current Level", size=12, color=BLACK, weight=ft.FontWeight.W_600), ft.Text(f"{current:,.0f} L ({percent:.0f}%)", size=12, color=BLACK, weight=ft.FontWeight.BOLD)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        ft.ProgressBar(value=progress, color=DARK_RED, bgcolor="#E5E7EB", bar_height=6, border_radius=4),
-                        ft.Row([ft.Container(expand=True, bgcolor="#F9FAFB", border_radius=6, padding=12, content=ft.Column([ft.Text("Dipstick", size=11, color=BLACK, weight=ft.FontWeight.W_600), ft.Text(f"{dipstick} cm", size=16, weight=ft.FontWeight.BOLD, color=BLACK)], spacing=4)),
-                                ft.Container(expand=True, bgcolor="#F9FAFB", border_radius=6, padding=12, content=ft.Column([ft.Text("Threshold", size=11, color=BLACK, weight=ft.FontWeight.W_600), ft.Text(f"{threshold:,.0f} L", size=16, weight=ft.FontWeight.BOLD, color=BLACK)], spacing=4))], spacing=12)
-                    ], spacing=8)),
-                    ft.Container(width=200, bgcolor="#FFFBF5", border=ft.Border.all(1, "#F3E8D3"), border_radius=8, padding=16, ink=True, on_click=open_price,
-                        content=ft.Column([ft.Row([ft.Icon(ft.Icons.LOCAL_OFFER_OUTLINED, size=16, color=DARK_RED), ft.Text("Current Price", size=11, weight=ft.FontWeight.BOLD, color=BLACK)], spacing=6),
-                                           ft.Row([ft.Text(f"₱{price:.2f}", size=24, weight=ft.FontWeight.BOLD, color=DARK_RED), ft.Text("/ L", size=12, color=BLACK)], spacing=4),
-                                           ft.Text("Tap to edit", size=10, color=BLACK, italic=True)], spacing=2))
+                    ft.Container(
+                        expand=True,
+                        content=ft.Column([
+                            progress_with_threshold,
+                            ft.Container(height=8),
+                            ft.Row([
+                                ft.Container(
+                                    expand=True, bgcolor="#F9FAFB", border_radius=6, padding=12,
+                                    content=ft.Column([
+                                        ft.Text("Dipstick", size=11, color=BLACK, weight=ft.FontWeight.W_600),
+                                        ft.Text(f"{dipstick} cm", size=16, weight=ft.FontWeight.BOLD, color=BLACK)
+                                    ], spacing=4)
+                                ),
+                                ft.Container(
+                                    expand=True, bgcolor="#FFFBF5", border=ft.Border.all(1, "#F3E8D3"),
+                                    border_radius=6, padding=12, ink=True, tooltip="Tap to edit threshold",
+                                    on_click=open_threshold,
+                                    content=ft.Column([
+                                        ft.Row([
+                                            ft.Text("Threshold", size=11, color=BLACK, weight=ft.FontWeight.W_600),
+                                            ft.Icon(ft.Icons.EDIT_OUTLINED, size=12, color=DARK_RED)
+                                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                                        ft.Text(f"{threshold:,.0f} L", size=16, weight=ft.FontWeight.BOLD, color=BLACK),
+                                        ft.Text("Tap to edit", size=9, color=DARK_RED, italic=True)
+                                    ], spacing=4)
+                                )
+                            ], spacing=12)
+                        ], spacing=8)
+                    ),
+                    ft.Container(
+                        width=200, bgcolor="#FFFBF5", border=ft.Border.all(1, "#F3E8D3"),
+                        border_radius=8, padding=16, ink=True, on_click=open_price,
+                        content=ft.Column([
+                            ft.Row([ft.Icon(ft.Icons.LOCAL_OFFER_OUTLINED, size=16, color=DARK_RED), ft.Text("Current Price", size=11, weight=ft.FontWeight.BOLD, color=BLACK)], spacing=6),
+                            ft.Row([ft.Text(f"₱{active_price:.2f}", size=24, weight=ft.FontWeight.BOLD, color=DARK_RED), ft.Text("/ L", size=12, color=BLACK)], spacing=4),
+                            ft.Text("Tap to edit", size=10, color=BLACK, italic=True)
+                        ], spacing=2)
+                    )
                 ], spacing=20)
             ], spacing=0)
         )
