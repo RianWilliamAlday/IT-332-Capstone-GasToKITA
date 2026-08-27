@@ -36,6 +36,29 @@ class Pump(SQLModel, table=True):
     fuel_type_id: int = Field(foreign_key="fuel.id")
     status: str = "Available"
 
+
+class FuelBatch(SQLModel, table=True):
+    __tablename__ = "fuel_batch"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fuel_id: int = Field(foreign_key="fuel.id", index=True)
+    liters_initial: float
+    liters_remaining: float
+    cost_per_liter: float
+    selling_price: float
+    supplier: Optional[str] = None
+    restocked_by: Optional[str] = None
+    restocked_at: datetime = Field(default_factory=datetime.now)
+
+class FuelSaleBatch(SQLModel, table=True):
+    __tablename__ = "fuel_sale_batch"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    sale_id: int = Field(foreign_key="sale.id", index=True)
+    batch_id: int = Field(foreign_key="fuel_batch.id", index=True)
+    liters_consumed: float
+    price_per_liter: float
+    total_amount: float
+    consumed_at: datetime = Field(default_factory=datetime.now)
+
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
 
@@ -61,7 +84,13 @@ class Sale(SQLModel, table=True):
     liters_sold: float
     price_per_liter: float
     total_amount: float
-    payment_method: str = Field(default="cash")
+    amount_paid: float = Field(default=0)
+    change_given: float = Field(default=0)
+    receipt_no: Optional[str] = Field(default=None, index=True)
+    payment_method: str = Field(default="cash", index=True)
+    payment_status: str = Field(default="paid", index=True)
+    paymongo_checkout_id: Optional[str] = Field(default=None, index=True)
+    gcash_ref_no: Optional[str] = Field(default=None)
     sold_at: datetime = Field(default_factory=datetime.now)
     recorded_by_user: Optional[User] = Relationship()
     fuel: Optional[Fuel] = Relationship()
@@ -96,7 +125,13 @@ class OilSale(SQLModel, table=True):
     quantity: int
     price_per_unit: float
     total_amount: float
-    payment_method: str = Field(default="cash")
+    amount_paid: float = Field(default=0)
+    change_given: float = Field(default=0)
+    receipt_no: Optional[str] = Field(default=None, index=True)
+    payment_method: str = Field(default="cash", index=True)
+    payment_status: str = Field(default="paid", index=True) 
+    paymongo_checkout_id: Optional[str] = Field(default=None, index=True)
+    gcash_ref_no: Optional[str] = Field(default=None)
     sold_at: datetime = Field(default_factory=datetime.now)
     sold_by: Optional[int] = Field(default=None, foreign_key="user.id")
     attendant_name: Optional[str] = None
@@ -108,3 +143,14 @@ class Expense(SQLModel, table=True):
     amount: float
     expense_date: datetime = Field(default_factory=datetime.now)
     recorded_by: Optional[int] = Field(default=None, foreign_key="user.id")
+
+class Attendant(SQLModel, table=True):
+    __tablename__ = "attendant"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    employee_id: Optional[str] = Field(default=None, index=True)
+    contact: Optional[str] = Field(default=None, description="Email OR phone number")
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    deactivated_at: Optional[datetime] = None

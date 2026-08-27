@@ -1,4 +1,3 @@
-
 from pydantic import BaseModel
 from typing import Optional, List, Literal, Dict
 from datetime import datetime, date
@@ -7,6 +6,17 @@ from enum import Enum
 class ProductType(str, Enum):
     FUEL = "fuel"
     OIL = "oil"
+
+class FuelBatchResponse(BaseModel):
+    id: int
+    fuel_id: int
+    liters_initial: float
+    liters_remaining: float
+    cost_per_liter: float
+    selling_price: float
+    supplier: Optional[str] = None
+    restocked_by: Optional[str] = None
+    restocked_at: datetime
 
 class FuelTypeResponse(BaseModel):
     id: int
@@ -19,6 +29,11 @@ class FuelTypeResponse(BaseModel):
     display_percentage: float
     threshold: float
     needs_restock: bool
+    fifo_price: Optional[float] = None
+    oldest_batch_price: Optional[float] = None
+    newest_batch_price: Optional[float] = None
+    active_batches: Optional[int] = None
+    batches: List[FuelBatchResponse] = []
 
 class Pump(BaseModel):
     id: int
@@ -37,15 +52,24 @@ class RestockRequest(BaseModel):
     liters_added: float
     cost: float
     supplier: Optional[str] = None
+    selling_price: float
 
 class ThresholdUpdate(BaseModel):
     threshold: float
+
+class FifoSaleDetail(BaseModel):
+    batch_id: int
+    liters_consumed: float
+    price_per_liter: float
+    total_amount: float
+    restocked_at: Optional[datetime] = None
 
 class SaleCreate(BaseModel):
     pump_id: int
     liters_sold: float
     attendant_name: str
     payment_method: str = "cash"
+    amount_paid: float = 0
 
 class SaleResponse(BaseModel):
     id: int
@@ -57,8 +81,16 @@ class SaleResponse(BaseModel):
     liters_sold: float
     price_per_liter: float
     total_amount: float
+    amount_paid: float
+    change_given: float
+    receipt_no: str
     payment_method: str
     sold_at: datetime
+    fifo_breakdown: Optional[List[FifoSaleDetail]] = None
+    is_split_price: bool = False
+    payment_status: Optional[str] = None
+    checkout_url: Optional[str] = None
+    checkout_id: Optional[str] = None
 
 class AttendantSalesSummary(BaseModel):
     attendant_name: str
@@ -76,10 +108,14 @@ class SaleHistoryItem(BaseModel):
     liters_sold: float
     price_per_liter: float
     total_amount: float
+    amount_paid: float
+    change_given: float
+    receipt_no: Optional[str] = None
     payment_method: str
     recorded_by: str
     fuel_name: Optional[str] = None
     pump_name: Optional[str] = None
+    fifo_breakdown: Optional[List[FifoSaleDetail]] = None
 
 class SalesHistoryResponse(BaseModel):
     sales: List[SaleHistoryItem]
@@ -104,6 +140,7 @@ class OilSaleCreate(BaseModel):
     quantity: int
     payment_method: str = "cash"
     attendant_name: Optional[str] = None
+    amount_paid: float = 0
 
 class OilSaleResponse(BaseModel):
     id: int
@@ -113,11 +150,17 @@ class OilSaleResponse(BaseModel):
     quantity: int
     price_per_unit: float
     total_amount: float
+    amount_paid: float
+    change_given: float
+    receipt_no: str
     payment_method: str
     attendant_name: str
     sold_at: datetime
     recorded_by: str
     remaining_stock: int
+    payment_status: Optional[str] = None
+    checkout_url: Optional[str] = None
+    checkout_id: Optional[str] = None
 
 class OilSaleHistoryItem(BaseModel):
     id: int
@@ -127,6 +170,9 @@ class OilSaleHistoryItem(BaseModel):
     quantity: int
     price_per_unit: float
     total_amount: float
+    amount_paid: float
+    change_given: float
+    receipt_no: Optional[str] = None
     payment_method: str
     attendant_name: Optional[str] = None
     sold_at: datetime
@@ -148,6 +194,9 @@ class UnifiedSaleItem(BaseModel):
     unit: Literal["L", "pcs"]
     price_per_unit: float
     total_amount: float
+    amount_paid: float
+    change_given: float
+    receipt_no: Optional[str] = None
     payment_method: str
     attendant_name: str
     sold_at: datetime
@@ -249,6 +298,7 @@ class UnifiedLowStockItem(BaseModel):
     days_remaining: Optional[float] = None
     fuel_id: Optional[int] = None
     oil_id: Optional[int] = None
+    current_fifo_price: Optional[float] = None
 
 class UnifiedLowStockResponse(BaseModel):
     total_count: int
