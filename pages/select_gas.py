@@ -282,7 +282,7 @@ def build_pump_page(page: ft.Page, auth: dict):
             qr_dialog = ft.AlertDialog(
                 modal=True,
                 title=ft.Text(f"GCash - ₱{total_amt:.2f}", weight=ft.FontWeight.BOLD),
-                content=ft.Column(tight=True, spacing=12, width=280, controls=[
+                content=ft.Column(tight=True, spacing=12, width=280, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[
                     ft.Text(f"{fuel_pump_name}", size=12, color="grey"),
                     ft.Container(alignment=ft.Alignment.CENTER, content=qr_image),
                     checkout_link,
