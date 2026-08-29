@@ -64,7 +64,6 @@ def restock_oil(oil_id: int, data: OilRestockRequest, session: Session = Depends
     oil.stock += data.quantity_added
     if data.quantity_added > 0:
         oil.cost = data.total_cost / data.quantity_added
-    oil.supplier = data.supplier or getattr(oil, "supplier", None)
     oil.updated_at = datetime.now()
 
     log = OilRestockLog(

@@ -100,7 +100,7 @@ def create_fuel_sale(
         sale = Sale(
             fuel_id=fuel.id,
             pump_id=data.pump_id,
-            attendant_name=data.attendant_name,
+            attendant_name=clean_name,
             recorded_by=current_user.id,
             liters_sold=data.liters_sold,
             price_per_liter=round(weighted_avg_price, 2),
@@ -112,23 +112,23 @@ def create_fuel_sale(
             payment_status="pending",
             paymongo_checkout_id=None
         )
-        session.add(sale)
-        session.flush()
-        sale.receipt_no = f"F-{sale.sold_at.strftime('%y%m%d')}-{sale.id:06d}-GCASH-PENDING"
-        session.add(sale)
-
+    
         try:
-            from..services.gcashService import create_gcash_checkout
+            from ..services.gcashService import create_gcash_checkout
             checkout = create_gcash_checkout(
                 amount_php=total_amount,
                 description=f"{fuel.name} {data.liters_sold}L - {clean_name}",
-                reference_id=f"fuel-{sale.id}",
-                metadata={"sale_id": str(sale.id), "attendant": clean_name, "product_type": "fuel"}
+                reference_id=f"fuel-{datetime.now().timestamp()}",
+                metadata={"attendant": clean_name, "product_type": "fuel"}
             )
+        
             sale.paymongo_checkout_id = checkout['checkout_id']
             session.add(sale)
             session.commit()
             session.refresh(sale)
+            sale.receipt_no = f"F-{sale.sold_at.strftime('%y%m%d')}-{sale.id:06d}-GCASH-PENDING"
+            session.add(sale)
+            session.commit()
 
             return SaleResponse(
                 id=sale.id,
@@ -346,136 +346,6 @@ def create_oil_sale(
         remaining_stock=oil.stock
     )
 
-@router.get("/history/fuel", response_model=SalesHistoryResponse)
-def get_fuel_history(
-    start_date: Optional[date] = Query(None),
-    end_date: Optional[date] = Query(None),
-    fuel_id: Optional[int] = None,
-    attendant_name: Optional[str] = None,
-    pump_id: Optional[int] = None,
-    payment_method: Optional[str] = None,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
-    session: Session = Depends(get_session)
-):
-    filters = []
-    if start_date:
-        filters.append(Sale.sold_at >= datetime.combine(start_date, time.min))
-    if end_date:
-        filters.append(Sale.sold_at <= datetime.combine(end_date, time.max))
-    if fuel_id is not None:
-        filters.append(Sale.fuel_id == fuel_id)
-    if attendant_name:
-        filters.append(Sale.attendant_name == attendant_name)
-    if pump_id is not None:
-        filters.append(Sale.pump_id == pump_id)
-    if payment_method:
-        filters.append(Sale.payment_method == payment_method)
-    base_q = select(Sale)
-    count_q = select(func.count()).select_from(Sale)
-    total_q = select(func.sum(Sale.total_amount), func.sum(Sale.liters_sold)).select_from(Sale)
-    if filters:
-        base_q = base_q.where(and_(*filters))
-        count_q = count_q.where(and_(*filters))
-        total_q = total_q.where(and_(*filters))
-    total_count = session.exec(count_q).one()
-    total_amount, total_liters = session.exec(total_q).one()
-    sales = session.exec(base_q.order_by(Sale.sold_at.desc()).offset((page-1)*page_size).limit(page_size)).all()
-    items = []
-    for s in sales:
-        fuel = session.get(Fuel, s.fuel_id)
-        pump = session.get(Pump, s.pump_id)
-        user = session.get(User, s.recorded_by)
-        batches = session.exec(select(FuelSaleBatch).where(FuelSaleBatch.sale_id == s.id)).all()
-        fifo = [FifoSaleDetail(batch_id=b.batch_id, liters_consumed=b.liters_consumed, price_per_liter=b.price_per_liter, total_amount=b.total_amount) for b in batches] if batches else None
-        items.append(SaleHistoryItem(
-            id=s.id,
-            sold_at=s.sold_at,
-            fuel_id=s.fuel_id,
-            pump_id=s.pump_id,
-            attendant_name=s.attendant_name,
-            liters_sold=s.liters_sold,
-            price_per_liter=s.price_per_liter,
-            total_amount=s.total_amount,
-            amount_paid=getattr(s, 'amount_paid', s.total_amount),
-            change_given=getattr(s, 'change_given', 0),
-            receipt_no=getattr(s, 'receipt_no', None),
-            payment_method=s.payment_method,
-            recorded_by=user.name if user else "Unknown",
-            fuel_name=fuel.name if fuel else "Unknown",
-            pump_name=pump.name if pump else "Unknown",
-            fifo_breakdown=fifo
-        ))
-    return SalesHistoryResponse(
-        sales=items,
-        total_count=total_count,
-        total_amount=total_amount or 0.0,
-        total_liters=total_liters or 0.0,
-        page=page,
-        page_size=page_size
-    )
-
-@router.get("/history/oil", response_model=OilSalesHistoryResponse)
-def get_oil_history(
-    start_date: Optional[date] = Query(None),
-    end_date: Optional[date] = Query(None),
-    oil_id: Optional[int] = None,
-    attendant_name: Optional[str] = None,
-    payment_method: Optional[str] = None,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
-    session: Session = Depends(get_session)
-):
-    filters = []
-    if start_date:
-        filters.append(OilSale.sold_at >= datetime.combine(start_date, time.min))
-    if end_date:
-        filters.append(OilSale.sold_at <= datetime.combine(end_date, time.max))
-    if oil_id:
-        filters.append(OilSale.oil_product_id == oil_id)
-    if attendant_name:
-        filters.append(OilSale.attendant_name == attendant_name)
-    if payment_method:
-        filters.append(OilSale.payment_method == payment_method)
-    base_q = select(OilSale)
-    count_q = select(func.count()).select_from(OilSale)
-    total_q = select(func.sum(OilSale.total_amount), func.sum(OilSale.quantity)).select_from(OilSale)
-    if filters:
-        base_q = base_q.where(and_(*filters))
-        count_q = count_q.where(and_(*filters))
-        total_q = total_q.where(and_(*filters))
-    total_count = session.exec(count_q).one()
-    total_amount, total_qty = session.exec(total_q).one()
-    sales = session.exec(base_q.order_by(OilSale.sold_at.desc()).offset((page-1)*page_size).limit(page_size)).all()
-    items = []
-    for s in sales:
-        oil = session.get(OilProduct, s.oil_product_id)
-        user = session.get(User, s.sold_by) if s.sold_by else None
-        items.append(OilSaleHistoryItem(
-            id=s.id,
-            oil_product_id=s.oil_product_id,
-            product_name=f"{oil.brand} {oil.name}" if oil else "Unknown",
-            brand=oil.brand if oil else "Unknown",
-            quantity=s.quantity,
-            price_per_unit=s.price_per_unit,
-            total_amount=s.total_amount,
-            amount_paid=getattr(s, 'amount_paid', s.total_amount),
-            change_given=getattr(s, 'change_given', 0),
-            receipt_no=getattr(s, 'receipt_no', None),
-            payment_method=s.payment_method,
-            attendant_name=s.attendant_name or "Unknown",
-            sold_at=s.sold_at,
-            recorded_by=user.name if user else "Unknown"
-        ))
-    return OilSalesHistoryResponse(
-        sales=items,
-        total_count=total_count,
-        total_amount=total_amount or 0.0,
-        total_quantity=total_qty or 0,
-        page=page,
-        page_size=page_size
-    )
-
 @router.get("/history", response_model=UnifiedHistoryResponse)
 def get_unified_history(
     start_date: Optional[date] = None,
@@ -487,89 +357,99 @@ def get_unified_history(
     page_size: int = Query(50, ge=1, le=200),
     session: Session = Depends(get_session)
 ):
-    fuel_filters = []
-    oil_filters = []
-    if start_date:
-        fuel_filters.append(Sale.sold_at >= datetime.combine(start_date, time.min))
-        oil_filters.append(OilSale.sold_at >= datetime.combine(start_date, time.min))
-    if end_date:
-        fuel_filters.append(Sale.sold_at <= datetime.combine(end_date, time.max))
-        oil_filters.append(OilSale.sold_at <= datetime.combine(end_date, time.max))
-    if attendant_name:
-        fuel_filters.append(Sale.attendant_name == attendant_name)
-        oil_filters.append(OilSale.attendant_name == attendant_name)
-    if payment_method:
-        fuel_filters.append(Sale.payment_method == payment_method)
-        oil_filters.append(OilSale.payment_method == payment_method)
-    fuel_sales = []
-    oil_sales = []
-    if product_type is None or product_type == ProductType.FUEL:
-        fq = select(Sale)
-        if fuel_filters:
-            fq = fq.where(and_(*fuel_filters))
-        fuel_sales = session.exec(fq.order_by(Sale.sold_at.desc())).all()
-    if product_type is None or product_type == ProductType.OIL:
-        oq = select(OilSale)
-        if oil_filters:
-            oq = oq.where(and_(*oil_filters))
-        oil_sales = session.exec(oq.order_by(OilSale.sold_at.desc())).all()
     unified: List[UnifiedSaleItem] = []
-    for s in fuel_sales:
-        fuel = session.get(Fuel, s.fuel_id)
-        pump = session.get(Pump, s.pump_id)
-        user = session.get(User, s.recorded_by)
-        unified.append(UnifiedSaleItem(
-            id=s.id,
-            product_type=ProductType.FUEL,
-            product_name=fuel.name if fuel else "Fuel",
-            quantity=s.liters_sold,
-            unit="L",
-            price_per_unit=s.price_per_liter,
-            total_amount=s.total_amount,
-            amount_paid=getattr(s, 'amount_paid', s.total_amount),
-            change_given=getattr(s, 'change_given', 0),
-            receipt_no=getattr(s, 'receipt_no', None),
-            payment_method=s.payment_method,
-            attendant_name=s.attendant_name,
-            sold_at=s.sold_at,
-            recorded_by=user.name if user else "Unknown",
-            fuel_id=s.fuel_id,
-            pump_id=s.pump_id,
-            pump_name=pump.name if pump else None
-        ))
-    for s in oil_sales:
-        oil = session.get(OilProduct, s.oil_product_id)
-        user = session.get(User, s.sold_by) if s.sold_by else None
-        unified.append(UnifiedSaleItem(
-            id=s.id,
-            product_type=ProductType.OIL,
-            product_name=f"{oil.brand} {oil.name}" if oil else "Oil",
-            quantity=float(s.quantity),
-            unit="pcs",
-            price_per_unit=s.price_per_unit,
-            total_amount=s.total_amount,
-            amount_paid=getattr(s, 'amount_paid', s.total_amount),
-            change_given=getattr(s, 'change_given', 0),
-            receipt_no=getattr(s, 'receipt_no', None),
-            payment_method=s.payment_method,
-            attendant_name=s.attendant_name or "Unknown",
-            sold_at=s.sold_at,
-            recorded_by=user.name if user else "Unknown",
-            oil_id=s.oil_product_id,
-            brand=oil.brand if oil else None
-        ))
+
+    if product_type is None or product_type == ProductType.FUEL:
+        fuel_stmt = (
+            select(Sale, Fuel.name, Pump.name, User.name)
+            .outerjoin(Fuel, Sale.fuel_id == Fuel.id)
+            .outerjoin(Pump, Sale.pump_id == Pump.id)
+            .outerjoin(User, Sale.recorded_by == User.id)
+        )
+        if start_date:
+            fuel_stmt = fuel_stmt.where(Sale.sold_at >= datetime.combine(start_date, time.min))
+        if end_date:
+            fuel_stmt = fuel_stmt.where(Sale.sold_at <= datetime.combine(end_date, time.max))
+        if attendant_name:
+            fuel_stmt = fuel_stmt.where(Sale.attendant_name == attendant_name)
+        if payment_method:
+            fuel_stmt = fuel_stmt.where(Sale.payment_method == payment_method)
+
+        fuel_results = session.exec(fuel_stmt.order_by(Sale.sold_at.desc())).all()
+
+        for s, fuel_name, pump_name, user_name in fuel_results:
+            unified.append(UnifiedSaleItem(
+                id=s.id,
+                product_type=ProductType.FUEL,
+                product_name=fuel_name or "Fuel",
+                quantity=s.liters_sold,
+                unit="L",
+                price_per_unit=s.price_per_liter,
+                total_amount=s.total_amount,
+                amount_paid=getattr(s, 'amount_paid', s.total_amount),
+                change_given=getattr(s, 'change_given', 0),
+                receipt_no=getattr(s, 'receipt_no', None),
+                payment_method=s.payment_method,
+                attendant_name=s.attendant_name,
+                sold_at=s.sold_at,
+                recorded_by=user_name or "Unknown",
+                fuel_id=s.fuel_id,
+                pump_id=s.pump_id,
+                pump_name=pump_name
+            ))
+
+    if product_type is None or product_type == ProductType.OIL:
+        oil_stmt = (
+            select(OilSale, OilProduct.brand, OilProduct.name, User.name)
+            .outerjoin(OilProduct, OilSale.oil_product_id == OilProduct.id)
+            .outerjoin(User, OilSale.sold_by == User.id)
+        )
+        if start_date:
+            oil_stmt = oil_stmt.where(OilSale.sold_at >= datetime.combine(start_date, time.min))
+        if end_date:
+            oil_stmt = oil_stmt.where(OilSale.sold_at <= datetime.combine(end_date, time.max))
+        if attendant_name:
+            oil_stmt = oil_stmt.where(OilSale.attendant_name == attendant_name)
+        if payment_method:
+            oil_stmt = oil_stmt.where(OilSale.payment_method == payment_method)
+
+        oil_results = session.exec(oil_stmt.order_by(OilSale.sold_at.desc())).all()
+
+        for s, oil_brand, oil_name, user_name in oil_results:
+            p_name = f"{oil_brand} {oil_name}".strip() if oil_brand or oil_name else "Oil"
+            unified.append(UnifiedSaleItem(
+                id=s.id,
+                product_type=ProductType.OIL,
+                product_name=p_name,
+                quantity=float(s.quantity),
+                unit="pcs",
+                price_per_unit=s.price_per_unit,
+                total_amount=s.total_amount,
+                amount_paid=getattr(s, 'amount_paid', s.total_amount),
+                change_given=getattr(s, 'change_given', 0),
+                receipt_no=getattr(s, 'receipt_no', None),
+                payment_method=s.payment_method,
+                attendant_name=s.attendant_name or "Unknown",
+                sold_at=s.sold_at,
+                recorded_by=user_name or "Unknown",
+                oil_id=s.oil_product_id,
+                brand=oil_brand
+            ))
+
     unified.sort(key=lambda x: x.sold_at, reverse=True)
     total_count = len(unified)
     total_amount = sum(x.total_amount for x in unified)
     total_liters = sum(x.quantity for x in unified if x.product_type == ProductType.FUEL)
     total_oil_pcs = int(sum(x.quantity for x in unified if x.product_type == ProductType.OIL))
-    offset = (page-1)*page_size
-    paged = unified[offset:offset+page_size]
+
+    offset = (page - 1) * page_size
+    paged = unified[offset : offset + page_size]
+
     return UnifiedHistoryResponse(
         sales=paged,
         total_count=total_count,
-        total_amount=round(total_amount,2),
-        total_liters=round(total_liters,2),
+        total_amount=round(total_amount, 2),
+        total_liters=round(total_liters, 2),
         total_oil_pcs=total_oil_pcs,
         page=page,
         page_size=page_size
