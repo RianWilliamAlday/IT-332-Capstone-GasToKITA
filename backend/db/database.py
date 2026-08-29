@@ -1,12 +1,26 @@
-from sqlmodel import SQLModel, Field, create_engine, Session, select, Relationship
+import os
+from pathlib import Path
 from typing import Optional
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
+from dotenv import load_dotenv
+from sqlmodel import SQLModel, Field, create_engine, Session, select, Relationship
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DB_FILE = PROJECT_ROOT / "gastokita.db"
-engine = create_engine("sqlite:///gastokita.db", echo=False)
+load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT / "backend" / ".env")
+DATABASE_URL = os.getenv("DATABASE")
+
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+engine = create_engine(
+    DATABASE_URL, 
+    echo=False, 
+    pool_pre_ping=True,
+    pool_size=10, 
+    max_overflow=20
+)
 
 class UserRole(str, Enum):
     ADMIN = "ADMIN"
@@ -36,7 +50,6 @@ class Pump(SQLModel, table=True):
     fuel_type_id: int = Field(foreign_key="fuel.id")
     status: str = "Available"
 
-
 class FuelBatch(SQLModel, table=True):
     __tablename__ = "fuel_batch"
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -59,13 +72,6 @@ class FuelSaleBatch(SQLModel, table=True):
     total_amount: float
     consumed_at: datetime = Field(default_factory=datetime.now)
 
-def create_db_and_tables():
-    SQLModel.metadata.create_all(engine)
-
-def get_session():
-    with Session(engine) as session:
-        yield session
-
 class RestockLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     fuel_id: int = Field(foreign_key="fuel.id")
@@ -78,7 +84,7 @@ class RestockLog(SQLModel, table=True):
 class Sale(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     fuel_id: int = Field(foreign_key="fuel.id")
-    pump_id: int = Field(foreign_key="pump.id")
+    pump_id: Optional[int] = Field(default=None, foreign_key="pump.id")
     attendant_name: str = Field(index=True)
     recorded_by: int = Field(foreign_key="user.id")
     liters_sold: float
@@ -154,3 +160,10 @@ class Attendant(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     deactivated_at: Optional[datetime] = None
+
+def create_db_and_tables():
+    SQLModel.metadata.create_all(engine)
+
+def get_session():
+    with Session(engine) as session:
+        yield session

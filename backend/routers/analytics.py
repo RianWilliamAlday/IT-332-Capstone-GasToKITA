@@ -22,13 +22,13 @@ def get_peak_hours(
     fuel_hourly = {}
     if product_type in ("fuel", "all"):
         fuel_sql = text("""
-            SELECT CAST(strftime('%H', sold_at) AS INTEGER) as hour,
-                   COUNT(*) as cnt,
-                   COALESCE(SUM(total_amount),0) as revenue,
-                   COALESCE(SUM(liters_sold),0) as qty
+            SELECT CAST(EXTRACT(HOUR FROM sold_at) AS INTEGER) as hour,
+                COUNT(*) as cnt,
+                COALESCE(SUM(total_amount),0) as revenue,
+                COALESCE(SUM(liters_sold),0) as qty
             FROM sale
             WHERE sold_at >= :since_date
-              AND (:fuel_id IS NULL OR fuel_id = :fuel_id)
+                AND (:fuel_id IS NULL OR fuel_id = :fuel_id)
             GROUP BY hour
         """)
         rows = session.execute(fuel_sql, {"since_date": since_date, "fuel_id": fuel_id}).fetchall()
@@ -38,13 +38,13 @@ def get_peak_hours(
     oil_hourly = {}
     if product_type in ("oil", "all"):
         oil_sql = text("""
-            SELECT CAST(strftime('%H', sold_at) AS INTEGER) as hour,
-                   COUNT(*) as cnt,
-                   COALESCE(SUM(total_amount),0) as revenue,
-                   COALESCE(SUM(quantity),0) as qty
+            SELECT CAST(EXTRACT(HOUR FROM sold_at) AS INTEGER) as hour,
+                COUNT(*) as cnt,
+                COALESCE(SUM(total_amount),0) as revenue,
+                COALESCE(SUM(quantity),0) as qty
             FROM oil_sale
             WHERE sold_at >= :since_date
-              AND (:oil_id IS NULL OR oil_product_id = :oil_id)
+                AND (:oil_id IS NULL OR oil_product_id = :oil_id)
             GROUP BY hour
         """)
         rows = session.execute(oil_sql, {"since_date": since_date, "oil_id": oil_id}).fetchall()
@@ -118,9 +118,9 @@ def get_demand_heatmap(
     data = []
     if product_type in ("fuel","all"):
         sql_fuel = text("""
-            SELECT CAST(strftime('%w', sold_at) AS INTEGER) as dow,
-                   CAST(strftime('%H', sold_at) AS INTEGER) as hour,
-                   COUNT(*) as cnt
+            SELECT CAST(EXTRACT(DOW FROM sold_at) AS INTEGER) as dow,
+                CAST(EXTRACT(HOUR FROM sold_at) AS INTEGER) as hour,
+                COUNT(*) as cnt
             FROM sale WHERE sold_at >= :since_date GROUP BY dow, hour
         """)
         for r in session.execute(sql_fuel, {"since_date": since_date}).fetchall():
@@ -377,7 +377,7 @@ def get_attendant_rankings(
     Example: /analytics/attendants/ranking?days=7&product_type=all&sort_by=revenue
     """
     since = datetime.now() - timedelta(days=days)
-
+    
     fuel_stats = {}
     if product_type in ("fuel", "all"):
         fuel_sql = text("""
@@ -588,7 +588,7 @@ def get_attendant_performance(
     fuel_mix = [{"fuel_name": r[0], "transactions": r[1], "liters": round(r[2],2), "revenue": round(r[3],2)} for r in session.execute(mix_sql, {"name": attendant_name, "since": since}).fetchall()]
 
     hourly_sql = text("""
-        SELECT CAST(strftime('%H', sold_at) AS INTEGER) as hour, COUNT(*) as cnt, SUM(total_amount) as rev
+        SELECT CAST(EXTRACT(HOUR FROM sold_at) AS INTEGER) as hour, COUNT(*) as cnt, SUM(total_amount) as rev
         FROM sale WHERE attendant_name=:name AND sold_at>=:since GROUP BY hour
     """)
     hourly = [{"hour": r[0], "transactions": r[1], "revenue": round(r[2],2)} for r in session.execute(hourly_sql, {"name": attendant_name, "since": since}).fetchall()]
