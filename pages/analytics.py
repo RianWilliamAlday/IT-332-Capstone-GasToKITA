@@ -650,4 +650,3 @@ def analytics_page(page: ft.Page, auth: dict):
 
     load_data()
     return ft.Column(controls=[header, content, footer], spacing=0, expand=True)
-127.0.0.1

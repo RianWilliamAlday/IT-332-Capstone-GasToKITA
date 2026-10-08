@@ -63,22 +63,38 @@ def select_transaction(page: ft.Page, auth: dict):
         page.add(build_oil_page(page, auth))
         page.update()
 
-    def card(title, handler):
+
+    def card(title, icon_widget, handler):
         return ft.Container(
-            width=240, height=240, bgcolor=RED, border_radius=25, padding=15,
-            on_click=handler, ink=True,
+            width=240, height=240, 
+            bgcolor=RED, 
+            border_radius=25, 
+            padding=15,
+            on_click=handler, 
+            ink=True,
             content=ft.Column(
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 controls=[
-                    ft.Container(expand=True, bgcolor="white", border_radius=18),
+                    ft.Container(
+                        expand=True,
+                        bgcolor="white",
+                        border_radius=18,
+                        alignment=ft.Alignment.CENTER,
+                        padding=10,
+                        content=icon_widget
+                    ),
                     ft.Text(title, size=22, weight=ft.FontWeight.BOLD, color="white")
-                ]))
+                ]
+            )
+        )
 
     body = ft.Container(
         expand=True, bgcolor="white", alignment=ft.Alignment(0,0),
         content=ft.Row(
             alignment=ft.MainAxisAlignment.CENTER, spacing=50,
-            controls=[card("Pump Gas", on_pump), card("Oils", on_oils)]
+            controls=[card("Pump Gas", ft.Icon(ft.Icons.LOCAL_GAS_STATION, size=85, color=RED),
+                     on_pump),card("Oils", ft.Icon(ft.Icons.WATER_DROP, size=85, color=RED), on_oils)]
         ))
 
     return ft.Column(spacing=0, expand=True, controls=[header, body, footer])

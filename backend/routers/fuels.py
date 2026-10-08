@@ -1,3 +1,5 @@
+from urllib import request
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from ..db.database import get_session, Fuel, RestockLog, FuelBatch, FuelSaleBatch
@@ -49,18 +51,37 @@ def get_fuels(session: Session = Depends(get_session)):
     for fuel in fuels:
         ensure_initial_batch(session, fuel)
         batches = get_fifo_batches(session, fuel.id)
+
+        batches_data = []
+        for b in batches:
+            batches_data.append(
+                FuelBatchResponse(
+                    id=b.id,
+                    fuel_id=b.fuel_id,
+                    liters_initial=getattr(b, 'liters_initial', getattr(b, 'initial_liters', 0)),
+                    liters_remaining=getattr(b, 'liters_remaining', getattr(b, 'remaining_liters', 0)),
+                    cost_per_liter=getattr(b, 'cost_per_liter', 0),
+                    selling_price=b.selling_price,
+                    supplier=getattr(b, 'supplier', None),
+                    restocked_by=getattr(b, 'restocked_by', None),
+                    restocked_at=getattr(b, 'restocked_at', getattr(b, 'created_at', datetime.now())),
+                )
+            )
+
         current_price = batches[0].selling_price if batches else fuel.price
-        oldest_price = batches[0].selling_price if batches else None
-        newest_price = batches[-1].selling_price if batches else None
         cm, dl = get_closest_dipstick_reading(fuel.actual_liters)
         pct = min(100.0, round((dl / fuel.tank_capacity) * 100, 2))
+
         resp.append(FuelTypeResponse(
             id=fuel.id, name=fuel.name, price=current_price,
             actual_liters=fuel.actual_liters, tank_capacity=fuel.tank_capacity,
             display_cm=cm, display_liters=dl, display_percentage=pct,
             threshold=fuel.threshold, needs_restock=check_low_stock(fuel),
-            fifo_price=current_price, oldest_batch_price=oldest_price,
-            newest_batch_price=newest_price, active_batches=len(batches)
+            fifo_price=current_price,
+            oldest_batch_price=batches[0].selling_price if batches else None,
+            newest_batch_price=batches[-1].selling_price if batches else None,
+            active_batches=len(batches),
+            batches=batches_data
         ))
     return resp
 
@@ -105,8 +126,8 @@ def restock_fuel(fuel_id: int, data: RestockRequest, session: Session = Depends(
     if data.liters_added <= 0: raise HTTPException(400, "Liters added must be positive")
     if fuel.actual_liters + data.liters_added > fuel.tank_capacity:
         raise HTTPException(400, f"Exceeds tank capacity. Only {fuel.tank_capacity - fuel.actual_liters:.2f}L space left")
-    if data.selling_price <= 0: raise HTTPException(400, "Selling price must be positive")
-
+    if data.selling_price <= 0:
+        raise HTTPException(400, "Selling price must be positive")
     ensure_initial_batch(session, fuel)
 
     cost_per_liter = data.cost / data.liters_added if data.liters_added > 0 else 0

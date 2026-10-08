@@ -275,7 +275,11 @@ def inventory_page(page: ft.Page, auth: dict):
                         content=ft.Text(
                             f"₱{batch_price:.2f}",
                             size=9, color=WHITE, weight=ft.FontWeight.BOLD
+<<<<<<< HEAD
                         ) if capacity and (liters / capacity) > 0.1 else None
+=======
+                        ) if capacity and (liters / capacity) > 0.5 else None
+>>>>>>> 8f64dcbf2778592e3efcbb26e575f2e7e8e7f2c7
                     )
                 )
             empty_liters = max(0, capacity - current)
@@ -333,13 +337,19 @@ def inventory_page(page: ft.Page, auth: dict):
                 ]
             ),
             
+            ft.Row(legend_items, spacing=16, wrap=True) if legend_items else ft.Container(),
+
             ft.Row([
                 ft.Text("0L", size=9, color="#9CA3AF"),
                 ft.Text(f"Threshold {threshold_pct:.0f}%", size=9, color=ORANGE if is_below else "#6B7280", weight=ft.FontWeight.BOLD),
                 ft.Text(f"{capacity:,}L", size=9, color="#9CA3AF"),
+<<<<<<< HEAD
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
 
             ft.Row(legend_items, spacing=16, wrap=True) if legend_items else ft.Container(),
+=======
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+>>>>>>> 8f64dcbf2778592e3efcbb26e575f2e7e8e7f2c7
         ])
 
         return ft.Container(

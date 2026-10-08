@@ -1,11 +1,10 @@
 import flet as ft
 from pages.history import TEXT_WHITE
 from pages.select import select_transaction
+from pages.api_client import get_attendant_names, DEFAULT_ATTENDANTS
 
 RED = "#A61E22"
 LIGHT_GRAY = "#E9E9E9"
-
-DEFAULT_ATTENDANTS = ["Attendant 1", "Attendant 2", "Attendant 3"]
 
 def pa_selection(page: ft.Page, auth: dict):
     page.title = "Select Pump Attendant"
@@ -25,10 +24,8 @@ def pa_selection(page: ft.Page, auth: dict):
     async def go_logout(e):
         await page.shared_preferences.remove("gastokita.auth_token")
         await page.shared_preferences.remove("gastokita.user_json")
-    
         auth.clear()
         auth.update({"token": None, "role": None, "user": None})
-    
         page.controls.clear()
         from app import main as app_main
         await app_main(page)
@@ -69,13 +66,21 @@ def pa_selection(page: ft.Page, auth: dict):
                     ft.Container(expand=True, bgcolor="white", border_radius=18,
                         alignment=ft.Alignment(0,0),
                         content=ft.Icon(ft.Icons.PERSON, size=80, color=RED)),
-                    ft.Text(title, size=22, weight=ft.FontWeight.BOLD, color="white"),
+                    ft.Text(title, size=22, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER),
                 ]))
 
-    attendants = DEFAULT_ATTENDANTS
+    attendants = get_attendant_names(auth)
 
     def make_handler(name):
         return lambda e: select_attendant(name)
+
+    cards_wrap = ft.Row(
+        wrap=True,
+        spacing=50,
+        run_spacing=30,
+        alignment=ft.MainAxisAlignment.CENTER,
+        controls=[card(name, make_handler(name)) for name in attendants]
+    )
 
     body = ft.Container(
         expand=True, bgcolor="white", alignment=ft.Alignment(0,0),
@@ -85,10 +90,7 @@ def pa_selection(page: ft.Page, auth: dict):
             spacing=10,
             controls=[
                 ft.Container(height=20),
-                ft.Row(
-                    alignment=ft.MainAxisAlignment.CENTER, spacing=50,
-                    controls=[card(name, make_handler(name)) for name in attendants]
-                )
+                ft.Container(content=cards_wrap, padding=20, alignment=ft.Alignment(0, 0))
             ]
         ))
 
