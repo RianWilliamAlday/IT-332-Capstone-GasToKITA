@@ -1,6 +1,5 @@
 import flet as ft
 import time, threading, traceback
-
 from pages.api_client import (
     get_fuels, get_oils, restock_fuel, update_fuel_price,
     dipstick_convert, sync_dipstick, create_oil_product, restock_oil,
@@ -15,39 +14,11 @@ GREEN = "#15803D"
 ORANGE = "#D97706"
 
 def open_dialog_compat(page: ft.Page, dialog: ft.AlertDialog):
-    try:
-        page.open(dialog)
-    except:
-        if hasattr(page, "open_dialog"):
-            page.open_dialog(dialog)
-        elif hasattr(page, "show_dialog"):
-            page.show_dialog(dialog)
-        else:
-            page.dialog = dialog
-            dialog.open = True
-            page.update()
+    page.show_dialog(dialog)
 
 def close_dialog_compat(page: ft.Page, dialog=None):
-    try:
-        if dialog:
-            dialog.open = False
-    except: pass
-    try:
-        if dialog:
-            page.close(dialog)
-    except: pass
-    try:
-        if hasattr(page, "close_dialog"):
-            page.close_dialog()
-    except: pass
-    try:
-        if hasattr(page, "pop_dialog"):
-            page.pop_dialog()
-    except: pass
-    try:
-        page.dialog = None
-        page.update()
-    except: pass
+    page.pop_dialog()
+
 
 def inventory_page(page: ft.Page, auth: dict):
     page.title = "Inventory"
@@ -304,7 +275,11 @@ def inventory_page(page: ft.Page, auth: dict):
                         content=ft.Text(
                             f"₱{batch_price:.2f}",
                             size=9, color=WHITE, weight=ft.FontWeight.BOLD
+<<<<<<< HEAD
+                        ) if capacity and (liters / capacity) > 0.1 else None
+=======
                         ) if capacity and (liters / capacity) > 0.5 else None
+>>>>>>> 8f64dcbf2778592e3efcbb26e575f2e7e8e7f2c7
                     )
                 )
             empty_liters = max(0, capacity - current)
@@ -368,7 +343,13 @@ def inventory_page(page: ft.Page, auth: dict):
                 ft.Text("0L", size=9, color="#9CA3AF"),
                 ft.Text(f"Threshold {threshold_pct:.0f}%", size=9, color=ORANGE if is_below else "#6B7280", weight=ft.FontWeight.BOLD),
                 ft.Text(f"{capacity:,}L", size=9, color="#9CA3AF"),
+<<<<<<< HEAD
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+
+            ft.Row(legend_items, spacing=16, wrap=True) if legend_items else ft.Container(),
+=======
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+>>>>>>> 8f64dcbf2778592e3efcbb26e575f2e7e8e7f2c7
         ])
 
         return ft.Container(
@@ -538,7 +519,7 @@ def inventory_page(page: ft.Page, auth: dict):
     def oil_table(oils: list):
         def h_cell(t,w): return ft.Container(width=w, padding=10, content=ft.Text(t, size=12, weight=ft.FontWeight.BOLD, color=BLACK))
         def d_cell(t,w): return ft.Container(width=w, padding=10, content=ft.Text(str(t), size=13, color=BLACK))
-        header_row = ft.Container(bgcolor="#F9FAFB", border=ft.Border.only(bottom=ft.BorderSide(1, "#E5E7EB")), content=ft.Row([h_cell("Oil Name",200), h_cell("Brand",100), h_cell("Stock",110), h_cell("Reorder",110), h_cell("Price",80), h_cell("Status",120)], spacing=0))
+        header_row = ft.Container(bgcolor="#F9FAFB", border=ft.Border.only(bottom=ft.BorderSide(1, "#E5E7EB")), content=ft.Row([h_cell("Oil Name",200), h_cell("Brand",100), h_cell("Stock",110), h_cell("Threshold",110), h_cell("Price",80), h_cell("Status",120)], spacing=0))
         rows=[]
         for i, oil in enumerate(oils):
             def make_handler(o):
@@ -582,24 +563,53 @@ def inventory_page(page: ft.Page, auth: dict):
         open_dialog_compat(page, dialog)
 
     def open_add_oil(e):
-        bf, nf, vf = ft.TextField(label="Brand", width=200, autofocus=True), ft.TextField(label="Oil Name", width=200), ft.TextField(label="Variant", width=200)
-        sf, pf, tf = ft.TextField(label="Stock", width=200, value="0", keyboard_type=ft.KeyboardType.NUMBER), ft.TextField(label="Price", width=200, value="0", keyboard_type=ft.KeyboardType.NUMBER), ft.TextField(label="Reorder Point", width=200, value="5", keyboard_type=ft.KeyboardType.NUMBER)
-        err=ft.Text("", size=11, color=DARK_RED)
+        bf = ft.TextField(label="Brand", width=200, autofocus=True)
+        nf = ft.TextField(label="Oil Name", width=200)
+        vf = ft.TextField(label="Variant", width=200)
+        sf = ft.TextField(label="Stock", width=200, value="0", keyboard_type=ft.KeyboardType.NUMBER)
+        pf = ft.TextField(label="Price", width=200, value="0", keyboard_type=ft.KeyboardType.NUMBER)
+        cf = ft.TextField(label="Cost", width=200, value="0", keyboard_type=ft.KeyboardType.NUMBER)
+        tf = ft.TextField(label="Reorder Point", width=200, value="5", keyboard_type=ft.KeyboardType.NUMBER)
+        err = ft.Text("", size=11, color=DARK_RED)
+        
         def do_add(ev):
             try:
-                if not bf.value or not nf.value: err.value="Brand and name required"; err.update(); return
+                if not bf.value or not nf.value: 
+                    err.value = "Brand and name required"
+                    err.update()
+                    return
                 close_dialog_compat(page)
                 def bg():
                     time.sleep(0.1)
                     try:
-                        create_oil_product(auth, bf.value, nf.value, int(float(sf.value or 0)), float(pf.value or 0), vf.value, int(float(tf.value or 5)))
+                        create_oil_product(
+                            auth, 
+                            bf.value, 
+                            nf.value, 
+                            int(float(sf.value or 0)), 
+                            float(pf.value or 0), 
+                            float(cf.value or 0), 
+                            vf.value, 
+                            int(float(tf.value or 5))
+                        )
                         show_snack(f"Added {bf.value} {nf.value}", GREEN)
                         auth.pop("oils_cache", None)
                         load_oils()
-                    except Exception as ex: show_snack(str(ex), DARK_RED)
+                    except Exception as ex: 
+                        show_snack(str(ex), DARK_RED)
                 page.run_thread(bg)
-            except Exception as ex: err.value=str(ex); err.update()
-        dialog = ft.AlertDialog(title=ft.Text("Add Oil Product"), content=ft.Column(tight=True, controls=[bf, nf, vf, sf, pf, tf, err]), actions=[ft.TextButton("Cancel", on_click=lambda e: close_dialog_compat(page)), ft.FilledButton("Add", bgcolor=DARK_RED, color="white", on_click=do_add)])
+            except Exception as ex: 
+                err.value = str(ex)
+                err.update()
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Add Oil Product"), 
+            content=ft.Column(tight=True, controls=[bf, nf, vf, sf, pf, cf, tf, err]), 
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda e: close_dialog_compat(page)), 
+                ft.FilledButton("Add", bgcolor=DARK_RED, color="white", on_click=do_add)
+            ]
+        )
         open_dialog_compat(page, dialog)
 
     dipstick_btn = ft.Button(content=ft.Row([ft.Icon(ft.Icons.STRAIGHTEN, size=16, color=WHITE), ft.Text("DIPSTICK CONVERTER", color=WHITE, size=12, weight=ft.FontWeight.BOLD)], spacing=6, tight=True), bgcolor=DARK_RED, on_click=open_dipstick)
@@ -659,7 +669,7 @@ def inventory_page(page: ft.Page, auth: dict):
     footer = ft.Container(
         content=ft.Row([
             ft.Container(content=ft.Row([ft.Icon(ft.Icons.LOGOUT, color=WHITE, size=16), ft.Text("LOGOUT", color=WHITE, size=13, weight=ft.FontWeight.BOLD)], spacing=6), bgcolor="#6B6B6B", border_radius=6, padding=ft.Padding.symmetric(vertical=8, horizontal=14), ink=True, on_click=go_logout),
-            ft.Text("GAStoKITA", color=WHITE, size=12),
+            ft.Text("GAStoKITA", color=WHITE, size=12, weight=ft.FontWeight.BOLD),
             ft.Row([ft.Icon(ft.Icons.PERSON_OUTLINE, color=WHITE, size=18), ft.Text(auth.get("name","ADMIN"), color=WHITE, size=13, weight=ft.FontWeight.BOLD)], spacing=4),
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         bgcolor=DARK_RED, padding=ft.Padding.symmetric(vertical=14, horizontal=24),
