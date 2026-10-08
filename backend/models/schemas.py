@@ -7,6 +7,17 @@ class ProductType(str, Enum):
     FUEL = "fuel"
     OIL = "oil"
 
+class FuelBatchResponse(BaseModel):
+    id: int
+    fuel_id: int
+    liters_initial: float
+    liters_remaining: float
+    cost_per_liter: float
+    selling_price: float
+    supplier: Optional[str] = None
+    restocked_by: Optional[str] = None
+    restocked_at: datetime
+
 class FuelTypeResponse(BaseModel):
     id: int
     name: str
@@ -22,6 +33,7 @@ class FuelTypeResponse(BaseModel):
     oldest_batch_price: Optional[float] = None
     newest_batch_price: Optional[float] = None
     active_batches: Optional[int] = None
+    batches: List[FuelBatchResponse] = []
 
 class Pump(BaseModel):
     id: int
@@ -44,17 +56,6 @@ class RestockRequest(BaseModel):
 
 class ThresholdUpdate(BaseModel):
     threshold: float
-
-class FuelBatchResponse(BaseModel):
-    id: int
-    fuel_id: int
-    liters_initial: float
-    liters_remaining: float
-    cost_per_liter: float
-    selling_price: float
-    supplier: Optional[str] = None
-    restocked_by: Optional[str] = None
-    restocked_at: datetime
 
 class FifoSaleDetail(BaseModel):
     batch_id: int
@@ -87,6 +88,9 @@ class SaleResponse(BaseModel):
     sold_at: datetime
     fifo_breakdown: Optional[List[FifoSaleDetail]] = None
     is_split_price: bool = False
+    payment_status: Optional[str] = None
+    checkout_url: Optional[str] = None
+    checkout_id: Optional[str] = None
 
 class AttendantSalesSummary(BaseModel):
     attendant_name: str
@@ -154,6 +158,9 @@ class OilSaleResponse(BaseModel):
     sold_at: datetime
     recorded_by: str
     remaining_stock: int
+    payment_status: Optional[str] = None
+    checkout_url: Optional[str] = None
+    checkout_id: Optional[str] = None
 
 class OilSaleHistoryItem(BaseModel):
     id: int
