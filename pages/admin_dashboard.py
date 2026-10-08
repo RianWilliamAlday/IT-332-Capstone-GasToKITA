@@ -1,32 +1,20 @@
 import flet as ft
-import threading, os, requests, asyncio
+import threading, os, asyncio
+from pages.api_client import (get_low_stock, get_revenue_summary) 
 
-DARK_RED   = "#8B0000"
-MED_RED    = "#A00000"
-LIGHT_CARD = "#E8E8E8"
-WHITE      = "#FFFFFF"
+DARK_RED    = "#8B0000"
+MED_RED     = "#A00000"
+LIGHT_CARD  = "#E8E8E8"
+WHITE       = "#FFFFFF"
 GREEN_ALERT = "#90EE90"
-LIGHT_RED = "#FFCDD2"
+LIGHT_RED   = "#FFCDD2"
 LIGHT_ORANGE = "#FFE0B2"
-TEXT_DARK  = "#1A1A1A"
-TEXT_WHITE = "#FFFFFF"
-BODY_BG = "#C0C0C0"
-DARK_GREEN = "#2E7D32"
+TEXT_DARK   = "#1A1A1A"
+TEXT_WHITE  = "#FFFFFF"
+BODY_BG     = "#C0C0C0"
+DARK_GREEN  = "#2E7D32"
 
 BASE_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
-
-def _headers(auth: dict):
-    token = auth.get("access_token") or auth.get("token")
-    return {"Authorization": f"Bearer {token}"} if token else {}
-
-def get_low_stock(auth: dict, include_warning=True):
-    try:
-        r = requests.get(f"{BASE_URL}/api/ai-inventory/low-stock", params={"product_type":"all","include_warning":include_warning}, headers=_headers(auth), timeout=5)
-        r.raise_for_status()
-        return r.json()
-    except Exception as ex:
-        print(f"[low-stock] {ex}")
-        return {"total_count":0, "items":[]}
 
 def open_dialog_compat(page: ft.Page, dialog):
     if hasattr(page, "open_dialog"):
@@ -156,6 +144,129 @@ def action_button(label: str, on_click=None) -> ft.Container:
         on_hover=lambda e: (setattr(e.control, "bgcolor", "#F5E6E6" if e.data == "true" else WHITE), e.control.update()),
     )
 
+def animated_daily_sales_card(page: ft.Page, auth: dict):
+    # Dynamic header tag and value controls
+    sales_category = ft.Text("TOTAL SALES", color=TEXT_WHITE, size=11, weight=ft.FontWeight.BOLD)
+    sales_value = ft.Text("₱ 0.00", color=TEXT_WHITE, size=22, weight=ft.FontWeight.BOLD)
+    sub_label = ft.Text("Transactions", color=TEXT_WHITE, size=10)
+    sub_value = ft.Text("0 txns", color=TEXT_WHITE, size=10, weight=ft.FontWeight.BOLD)
+
+    anim_content = ft.Column([
+        ft.Row([
+            ft.Row([
+                ft.Container(ft.Icon(ft.Icons.TRENDING_UP, color=TEXT_WHITE, size=20), bgcolor=MED_RED, border_radius=6, padding=6),
+                ft.Container(content=sales_category, bgcolor="#5A0000", border_radius=12, padding=ft.Padding.symmetric(horizontal=10, vertical=4)),
+            ], spacing=8),
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+        ft.Text("Daily Revenue", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD),
+        sales_value,
+        ft.Row([sub_label, sub_value], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+    ], spacing=10)
+
+    # Replicates animated fuel stat card transition properties
+    card = ft.Container(
+        content=anim_content,
+        bgcolor=DARK_RED, border_radius=10, padding=14, expand=True,
+        animate_opacity=ft.Animation(duration=500, curve=ft.AnimationCurve.EASE_IN_OUT),
+        animate_scale=ft.Animation(duration=500, curve=ft.AnimationCurve.EASE_IN_OUT),
+        ink=True
+    )
+
+    modes_data = []
+
+    def update_card_view(data):
+        sales_category.value = data["category"]
+        sales_value.value = f"₱ {data['revenue']:,.2f}"
+        sub_label.value = data["sub_label"]
+        sub_value.value = data["sub_val"]
+
+    def load_from_backend():
+        nonlocal modes_data
+        try:
+            from pages.api_client import get_revenue_summary
+            # days=1 queries daily revenue summary
+            res = get_revenue_summary(auth, days=1)
+            f = res.get("fuel", {})
+            o = res.get("oil", {})
+            c = res.get("combined", {})
+
+            modes_data = [
+                {
+                    "category": "TOTAL SALES",
+                    "revenue": c.get("revenue", 0.0),
+                    "sub_label": "Transactions",
+                    "sub_val": f"{c.get('transactions', 0)} txns"
+                },
+                {
+                    "category": "FUEL SALES",
+                    "revenue": f.get("revenue", 0.0),
+                    "sub_label": "Volume Sold",
+                    "sub_val": f"{f.get('liters', 0.0):,.2f} L ({f.get('transactions', 0)} txns)"
+                },
+                {
+                    "category": "OIL SALES",
+                    "revenue": o.get("revenue", 0.0),
+                    "sub_label": "Units Sold",
+                    "sub_val": f"{o.get('quantity', 0)} pcs ({o.get('transactions', 0)} txns)"
+                }
+            ]
+
+            if modes_data:
+                update_card_view(modes_data[0])
+            page.update()
+        except Exception as e:
+            sales_category.value = "ERROR"
+            sales_value.value = "₱ --"
+            sub_label.value = "Status"
+            sub_value.value = str(e)[:25]
+            page.update()
+
+    page.run_thread(load_from_backend)
+
+    idx = 0
+
+    async def auto_cycle():
+        nonlocal idx
+        while True:
+            await asyncio.sleep(4.5)
+            if len(modes_data) <= 1:
+                continue
+
+            # Scale and fade out
+            card.opacity = 0.0
+            card.scale = ft.Scale(0.93)
+            page.update()
+            await asyncio.sleep(0.😎
+
+            idx = (idx + 1) % len(modes_data)
+            update_card_view(modes_data[idx])
+
+            # Scale and fade in
+            card.opacity = 1.0
+            card.scale = ft.Scale(1.0)
+            page.update()
+
+    async def cycle_once():
+        nonlocal idx
+        if not modes_data: 
+            return
+        card.opacity = 0.0
+        page.update()
+        await asyncio.sleep(0.35)
+
+        idx = (idx + 1) % len(modes_data)
+        update_card_view(modes_data[idx])
+
+        card.opacity = 1.0
+        page.update()
+
+    def on_click(e):
+        page.run_task(cycle_once)
+
+    card.on_click = on_click
+    page.run_task(auto_cycle)
+    return card
+
 def dashboard_page(page: ft.Page, auth: dict):
     page.title = "Admin Dashboard"
     page.bgcolor = DARK_RED
@@ -197,9 +308,19 @@ def dashboard_page(page: ft.Page, auth: dict):
         page.add(history_page(page, auth))
 
     def open_optimization(e):
-        from pages.optimization import ai_optimization_page
+        from pages.optimization import optimization_page
         page.controls.clear()
-        page.add(ai_optimization_page(page, auth))
+        page.add(optimization_page(page, auth))
+
+    def open_expenses(e):
+        from pages.expenses import expenses_page
+        page.controls.clear()
+        page.add(expenses_page(page, auth))
+
+    def open_employees(e):
+        from pages.employees import employees_page
+        page.controls.clear()
+        page.add(employees_page(page, auth))
 
     def stat_card(icon, title, value, period_label="daily", show_progress=False, progress_value=0.5, sub_label="", dropdowns=None):
         top_left = None
@@ -225,20 +346,34 @@ def dashboard_page(page: ft.Page, auth: dict):
 
     stats_row = ft.Row([
         animated_fuel_stat_card(page, auth),
-        stat_card(icon=ft.Icons.TRENDING_UP, title="Daily Sales", value="₱ 10,000", period_label="daily"),
+        animated_daily_sales_card(page, auth),
         stat_card(icon=ft.Icons.ATTACH_MONEY, title="Daily Net Profit", value="₱ 5,000", period_label="daily"),
     ], spacing=16)
 
-    quick_actions_col = ft.Column([
-        ft.Text("Quick Actions", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD),
-        ft.Container(height=4),
+    # --- 1. SCROLLABLE QUICK ACTIONS ---
+    quick_actions_list = ft.Column([
         action_button("View Analytics", on_click=go_analytics),
         action_button("View Inventory", on_click=go_inventory),
         action_button("Transaction History", on_click=go_history),
         action_button("Inventory Optimization", on_click=open_optimization),
-    ], spacing=12, tight=True)
+        action_button("Expenses", on_click=open_expenses),
+        action_button("Manage Employees", on_click=open_employees),
+    ], spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
 
-    quick_actions = ft.Container(content=quick_actions_col, bgcolor=LIGHT_CARD, border_radius=10, padding=18, expand=True)
+    quick_actions_col = ft.Column([
+        ft.Text("Quick Actions", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD),
+        ft.Container(height=4),
+        quick_actions_list
+    ], spacing=0, tight=True)
+
+    quick_actions = ft.Container(
+        content=quick_actions_col, 
+        bgcolor=LIGHT_CARD, 
+        border_radius=10, 
+        padding=18, 
+        expand=True,
+        height=380  # Fixed height enables internal scrolling
+    )
 
     low_stock_col = ft.Column([
         ft.Text("Low Stock Alert", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD),
@@ -288,7 +423,6 @@ def dashboard_page(page: ft.Page, auth: dict):
                 )
             if total > 5:
                 alert_widgets.append(ft.Text(f"+{total-5} more...", size=10, color=DARK_RED, italic=True))
-
             low_stock_col.controls = [
                 ft.Row([ft.Text("Low Stock Alert", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD), ft.Container(content=ft.Text(f"{total}", size=11, color=WHITE, weight=ft.FontWeight.BOLD), bgcolor=DARK_RED, border_radius=10, padding=ft.Padding.symmetric(horizontal=8, vertical=2))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Container(height=8),
@@ -296,6 +430,7 @@ def dashboard_page(page: ft.Page, auth: dict):
                 ft.Container(height=6),
                 ft.Container(content=ft.Text("View Inventory →", size=11, color=DARK_RED, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER), border=ft.Border.all(1, DARK_RED), border_radius=6, padding=8, ink=True, on_click=go_inventory)
             ]
+            
         try: page.update()
         except: pass
 
@@ -309,9 +444,12 @@ def dashboard_page(page: ft.Page, auth: dict):
 
     middle_row = ft.Row([quick_actions, low_stock], spacing=16, vertical_alignment=ft.CrossAxisAlignment.START)
 
+    # Removed body-level scroll so card containers scroll internally
     body = ft.Container(
-        bgcolor=BODY_BG, expand=True, padding=ft.Padding.only(left=20, right=20, top=20, bottom=24),
-        content=ft.Column(controls=[stats_row, middle_row], spacing=16, expand=True, scroll=ft.ScrollMode.ADAPTIVE),
+        bgcolor=BODY_BG, 
+        expand=True, 
+        padding=ft.Padding.only(left=20, right=20, top=20, bottom=24),
+        content=ft.Column(controls=[stats_row, middle_row], spacing=16, expand=True),
     )
 
     footer = ft.Container(

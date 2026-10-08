@@ -1,53 +1,21 @@
 import flet as ft
 import os, time
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 import flet_charts as fch
-
-DARK_RED   = "#8B0000"
-TEXT_WHITE = "#FFFFFF"
-BASE_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
-
-try:
-    from api_client import (
+from pages.api_client import (
         get_peak_hours, get_heatmap, get_fuel_profit_margins,
         get_oil_profit_margins, get_unified_profit_margins,
         get_revenue_summary, get_top_oils, get_attendant_rankings,
         get_attendant_performance, get_attendant_leaderboard
     )
-except ImportError:
-    try:
-        from .api_client import (
-            get_peak_hours, get_heatmap, get_fuel_profit_margins,
-            get_oil_profit_margins, get_unified_profit_margins,
-            get_revenue_summary, get_top_oils, get_attendant_leaderboard,
-            get_attendant_performance, get_attendant_rankings
-        )
-    except:
-        import requests
-        def _headers(auth: dict):
-            token = auth.get("access_token") or auth.get("token")
-            return {"Authorization": f"Bearer {token}"} if token else {}
-        def get_peak_hours(auth, days=30, product_type="all"):
-            r = requests.get(f"{BASE_URL}/analytics/peak-hours", params={"days": days, "product_type": product_type}, headers=_headers(auth), timeout=10)
-            r.raise_for_status(); return r.json()
-        def get_heatmap(auth, days=30, product_type="fuel"):
-            r = requests.get(f"{BASE_URL}/analytics/heatmap", params={"days": days, "product_type": product_type}, headers=_headers(auth), timeout=10)
-            r.raise_for_status(); return r.json()
-        def get_fuel_profit_margins(auth, days=30):
-            r = requests.get(f"{BASE_URL}/analytics/profit-margins/fuel", params={"days": days}, headers=_headers(auth), timeout=10)
-            r.raise_for_status(); return r.json()
-        def get_oil_profit_margins(auth, days=30):
-            r = requests.get(f"{BASE_URL}/analytics/profit-margins/oil", params={"days": days}, headers=_headers(auth), timeout=10)
-            r.raise_for_status(); return r.json()
-        def get_unified_profit_margins(auth, days=30):
-            r = requests.get(f"{BASE_URL}/analytics/profit-margins/unified", params={"days": days}, headers=_headers(auth), timeout=10)
-            r.raise_for_status(); return r.json()
-        def get_revenue_summary(auth, days=30):
-            r = requests.get(f"{BASE_URL}/analytics/revenue/summary", params={"days": days}, headers=_headers(auth), timeout=10)
-            r.raise_for_status(); return r.json()
-        def get_top_oils(auth, days=30, limit=5):
-            r = requests.get(f"{BASE_URL}/analytics/oil/top-selling", params={"days": days, "limit": limit}, headers=_headers(auth), timeout=10)
-            r.raise_for_status(); return r.json()
+
+DARK_RED   = "#8B0000"
+TEXT_WHITE = "#FFFFFF"
+BASE_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+COLOR_REGULAR = "#0CA940"
+COLOR_PREMIUM = "#E3242B"
+COLOR_DIESEL = "#F5C243"
 
 def analytics_page(page: ft.Page, auth: dict):
     page.title = "Analytics & Performance Dashboard"
@@ -56,38 +24,38 @@ def analytics_page(page: ft.Page, auth: dict):
     page.theme = ft.Theme(color_scheme_seed=DARK_RED)
     selected_attendant = {"name": None}
 
-    days_dropdown = ft.Dropdown(
+    days_dropdown = ft.DropdownM2(
         label="Period", value="30", filled=True, fill_color="white",
         border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED,
         width=140,
         options=[
-            ft.dropdown.Option("7", "Last 7 days"),
-            ft.dropdown.Option("30", "Last 30 days"),
-            ft.dropdown.Option("90", "Last 90 days"),
-            ft.dropdown.Option("365", "Last Year"),
+            ft.dropdownm2.Option("7", "Last 7 days"),
+            ft.dropdownm2.Option("30", "Last 30 days"),
+            ft.dropdownm2.Option("90", "Last 90 days"),
+            ft.dropdownm2.Option("365", "Last Year"),
         ]
     )
-    product_dropdown = ft.Dropdown(
+    product_dropdown = ft.DropdownM2(
         label="Product", value="all", filled=True, fill_color="white",
         border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED,
         width=140,
         options=[
-            ft.dropdown.Option("all", "All"),
-            ft.dropdown.Option("fuel", "Fuel only"),
-            ft.dropdown.Option("oil", "Oil only"),
+            ft.dropdownm2.Option("all", "All"),
+            ft.dropdownm2.Option("fuel", "Fuel only"),
+            ft.dropdownm2.Option("oil", "Oil only"),
         ]
     )
 
-    attendant_sort_dropdown = ft.Dropdown(
+    attendant_sort_dropdown = ft.DropdownM2(
         label="Sort Attendants By", value="revenue", filled=True, fill_color="white",
         border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED,
         width=180,
         options=[
-            ft.dropdown.Option("revenue", "Revenue"),
-            ft.dropdown.Option("liters", "Liters Sold"),
-            ft.dropdown.Option("transactions", "Transactions"),
-            ft.dropdown.Option("oil_pcs", "Oil Pieces"),
-            ft.dropdown.Option("avg_ticket", "Avg Ticket Size"),
+            ft.dropdownm2.Option("revenue", "Revenue"),
+            ft.dropdownm2.Option("liters", "Liters Sold"),
+            ft.dropdownm2.Option("transactions", "Transactions"),
+            ft.dropdownm2.Option("oil_pcs", "Oil Pieces"),
+            ft.dropdownm2.Option("avg_ticket", "Avg Ticket Size"),
         ]
     )
 
@@ -241,27 +209,46 @@ def analytics_page(page: ft.Page, auth: dict):
         )
 
     def build_fuel_pie(fuel_data):
-        if not fuel_data: return ft.Text("No fuel sales")
-        total = sum([f.get("liters_sold",0) for f in fuel_data]) or 1
-        colors = ["#8B0000", "#C62828", "#EF5350"]
+        if not fuel_data: 
+            return ft.Text("No fuel sales")
+            
+        total = sum([f.get("liters_sold", 0) for f in fuel_data]) or 1
+        
+        fuel_color_map = {
+            "regular": COLOR_REGULAR,
+            "unleaded": COLOR_REGULAR,
+            "premium": COLOR_PREMIUM,
+            "diesel": COLOR_DIESEL,
+        }
+        
         sections = []
         legend = []
+        
         for i, f in enumerate(fuel_data):
-            liters = f.get("liters_sold",0)
-            pct = liters/total*100
+            fuel_name = f.get('fuel_name', '')
+            liters = f.get("liters_sold", 0)
+            pct = liters / total * 100
+            matched_color = DARK_RED
+            for key, val in fuel_color_map.items():
+                if key in fuel_name.lower():
+                    matched_color = val
+                    break
+
             sections.append(fch.PieChartSection(
                 value=float(liters),
                 title=f"{pct:.0f}%" if pct > 5 else "",
-                color=colors[i%len(colors)],
+                color=matched_color,
                 radius=70
             ))
+            
             legend.append(ft.Row([
-                ft.Container(width=10,height=10,bgcolor=colors[i%len(colors)],border_radius=2),
-            ft.Text(f"{f.get('fuel_name')} - {pct:.1f}% ({liters:.0f}L)", size=11)
-        ]))
+                ft.Container(width=10, height=10, bgcolor=matched_color, border_radius=2),
+                ft.Text(f"{fuel_name} - {pct:.1f}% ({liters:.0f}L)", size=11)
+            ]))
+            
         return ft.Column([
             ft.Container(content=fch.PieChart(sections=sections, center_space_radius=35, sections_space=2), height=200),
-            ft.Row(controls=legend, spacing=4)
+            ft.Row(controls=legend, spacing=8)
         ])
 
     def build_oil_bar(top_oils):
@@ -415,146 +402,172 @@ def analytics_page(page: ft.Page, auth: dict):
             padding=8
         )
 
+    def safe_ui_refresh(*controls):
+        try:
+            for c in controls:
+                c.update()
+        except Exception as ue:
+            print(f"[analytics] update failed: {ue}")
+
+    def build_rank_rows(rankings):
+        rows = []
+        for r in rankings:
+            name_str = r.get("attendant_name", "")
+            medal = r.get("medal") or ""
+            rows.append(
+                ft.DataRow(cells=[
+                    ft.DataCell(ft.Text(f"{r.get('rank')} {medal}")),
+                    ft.DataCell(ft.Text(name_str, weight=ft.FontWeight.BOLD)),
+                    ft.DataCell(ft.Text(f"₱{r.get('total_revenue', 0):,.2f}")),
+                    ft.DataCell(ft.Text(str(r.get('transaction_count', 0)))),
+                    ft.DataCell(ft.Text(f"{r.get('total_liters', 0):,.1f} L")),
+                    ft.DataCell(ft.Text(str(r.get('total_oil_pcs', 0)))),
+                    ft.DataCell(ft.Text(f"₱{r.get('avg_ticket', 0):,.2f}")),
+                    ft.DataCell(
+                        ft.TextButton("Inspect Profile", on_click=lambda e, name=name_str: view_individual_performance(name))
+                    ),
+                ])
+            )
+        return rows
+
     def load_data():
         def bg():
             time.sleep(0.05)
             try:
                 days = int(days_dropdown.value)
-            except:
+            except Exception:
                 days = 30
             prod = product_dropdown.value
             attendant_sort = attendant_sort_dropdown.value
 
-            def safe_ui_refresh():
-                try: page.update()
-                except: pass
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                f_rev  = ex.submit(get_revenue_summary, auth, days=days)
+                f_uni  = ex.submit(get_unified_profit_margins, auth, days=days)
+                f_peak = ex.submit(get_peak_hours, auth, days=days, product_type=prod)
+                f_fuel = ex.submit(get_fuel_profit_margins, auth, days=days)
+                f_oils = ex.submit(get_top_oils, auth, days=days, limit=5)
+                f_heat = ex.submit(get_heatmap, auth, days=days, product_type="fuel" if prod == "all" else prod)
+                f_lb   = ex.submit(get_attendant_leaderboard, auth, days=days)
+                f_rank = ex.submit(get_attendant_rankings, auth, days=days, product_type=prod,
+                                   sort_by=attendant_sort, limit=15, include_breakdown=False)
 
+                try:
+                    rev = f_rev.result()
+                    if rev and "combined" in rev:
+                        rev_text.value = f"₱{rev['combined'].get('revenue', 0):,.0f}"
+                    safe_ui_refresh(rev_text)
+                except Exception as e:
+                    print(f"[analytics] revenue: {e}")
+
+                try:
+                    uni = f_uni.result()
+                    if uni and "summary" in uni:
+                        profit_text.value = f"₱{uni['summary'].get('total_profit', 0):,.0f}"
+                        margin_text.value = f"{uni['summary'].get('total_margin_percent', 0):.1f}%"
+                    safe_ui_refresh(profit_text, margin_text)
+                except Exception as e:
+                    print(f"[analytics] profit: {e}")
+
+                try:
+                    peak = f_peak.result()
+                    if peak:
+                        peak_text.value = peak.get("peak_window_3h", "N/A")
+                        insight_text.value = peak.get("insight", "No anomalous insights processing out.")
+                        peak_chart = build_peak_bar_chart(peak.get("hourly_breakdown", []))
+                        peak_chart_container.content = ft.Column(controls=[
+                            ft.Text(f"Peak Hours ({prod.upper()}) - {peak.get('peak_window_3h','')}", size=13, weight=ft.FontWeight.BOLD, color="#222"),
+                            ft.Container(content=peak_chart, height=200, expand=True),
+                        ], spacing=8)
+                    safe_ui_refresh(peak_text, insight_text, peak_chart_container)
+                except Exception as e:
+                    print(f"[analytics] peak: {e}")
+
+                try:
+                    fuel_m = f_fuel.result()
+                    if fuel_m:
+                        pie = build_fuel_pie(fuel_m)
+                        fuel_pie_container.content = ft.Column(controls=[
+                            ft.Text("Fuel Consumption Share", size=13, weight=ft.FontWeight.BOLD, color="#222"),
+                            ft.Container(content=pie, height=220, expand=True)
+                        ], spacing=8)
+                        profit_chart = build_profit_bar(fuel_m)
+                        profit_bar_container.content = ft.Column(controls=[
+                            ft.Text("Fuel Margin %", size=13, weight=ft.FontWeight.BOLD, color="#222"),
+                            ft.Container(content=profit_chart, height=220, expand=True)
+                        ], spacing=8)
+                    safe_ui_refresh(fuel_pie_container, profit_bar_container)
+                except Exception as e:
+                    print(f"[analytics] fuel: {e}")
+
+                try:
+                    top_oils = f_oils.result()
+                    if top_oils:
+                        oil_bar_container.content = ft.Column(controls=[
+                            ft.Text(f"Top Selling Oils - Last {days}d", size=13, weight=ft.FontWeight.BOLD, color="#222"),
+                            build_oil_bar(top_oils)
+                        ], spacing=8)
+                    safe_ui_refresh(oil_bar_container)
+                except Exception as e:
+                    print(f"[analytics] oils: {e}")
+
+                try:
+                    heat = f_heat.result()
+                    if heat:
+                        grid = build_heatmap_grid(heat.get("data", []), heat.get("day_labels", []))
+                        heatmap_container.content = ft.Column(controls=[
+                            ft.Text(f"Demand Heatmap ({heat.get('product_type','').upper()})", size=13, weight=ft.FontWeight.BOLD, color="#222"),
+                            grid
+                        ], spacing=8)
+                    safe_ui_refresh(heatmap_container)
+                except Exception as e:
+                    print(f"[analytics] heatmap: {e}")
+
+                try:
+                    lb = f_lb.result()
+                    podium = lb.get("podium", [])
+                    t1 = lb.get("top_1") or (podium[0] if len(podium) > 0 else None)
+                    t2 = lb.get("top_2") or (podium[1] if len(podium) > 1 else None)
+                    t3 = lb.get("top_3") or (podium[2] if len(podium) > 2 else None)
+                    podium_container.controls = [
+                        make_podium_card(2, t2.get("attendant_name") if t2 else None, "2nd Place", f"₱{t2.get('total_revenue',0):,.0f}" if t2 else "₱0"),
+                        make_podium_card(1, t1.get("attendant_name") if t1 else None, "Top Performer", f"₱{t1.get('total_revenue',0):,.0f}" if t1 else "₱0"),
+                        make_podium_card(3, t3.get("attendant_name") if t3 else None, "3rd Place", f"₱{t3.get('total_revenue',0):,.0f}" if t3 else "₱0"),
+                    ]
+                    safe_ui_refresh(podium_container)
+                except Exception as e:
+                    print(f"[analytics] podium: {e}")
+
+                try:
+                    rank_data = f_rank.result()
+                    ranking_table.rows = build_rank_rows(rank_data.get("rankings", []))
+                    safe_ui_refresh(ranking_table)
+                    if selected_attendant["name"]:
+                        view_individual_performance(selected_attendant["name"])
+                except Exception as e:
+                    print(f"[analytics] rankings: {e}")
+
+        page.run_thread(bg)
+
+    def refresh_rankings_only():
+        def bg():
             try:
-                rev = get_revenue_summary(auth, days=days)
-                if rev and "combined" in rev:
-                    rev_text.value = f"₱{rev['combined'].get('revenue', 0):,.0f}"
-                safe_ui_refresh()
+                rank_data = get_attendant_rankings(
+                    auth,
+                    days=int(days_dropdown.value),
+                    product_type=product_dropdown.value,
+                    sort_by=attendant_sort_dropdown.value,
+                    limit=15,
+                    include_breakdown=False,
+                )
+                ranking_table.rows = build_rank_rows(rank_data.get("rankings", []))
+                ranking_table.update()
             except Exception as e:
-                print(f"[analytics] Error retrieving revenue structural block: {e}")
-
-            try:
-                uni = get_unified_profit_margins(auth, days=days)
-                if uni and "summary" in uni:
-                    profit_text.value = f"₱{uni['summary'].get('total_profit', 0):,.0f}"
-                    margin_text.value = f"{uni['summary'].get('total_margin_percent', 0):.1f}%"
-                safe_ui_refresh()
-            except Exception as e:
-                print(f"[analytics] Error evaluating corporate profit metrics: {e}")
-
-            try:
-                peak = get_peak_hours(auth, days=days, product_type=prod)
-                if peak:
-                    peak_text.value = peak.get("peak_window_3h", "N/A")
-                    insight_text.value = peak.get("insight", "No anomalous insights processing out.")
-                    
-                    peak_chart = build_peak_bar_chart(peak.get("hourly_breakdown", []))
-                    busiest = peak.get('busiest_hour') or {}
-                    peak_chart_container.content = ft.Column(controls=[
-                        ft.Text(f"Peak Hours ({prod.upper()}) - {peak.get('peak_window_3h','')}", size=13, weight=ft.FontWeight.BOLD, color="#222"),
-                        ft.Container(content=peak_chart, height=200, expand=True),
-                        ft.Text(f"Busiest: {busiest.get('label','N/A')} | Recommended Staffing Level: {busiest.get('staffing_level','')}", size=10, color="#666")
-                    ], spacing=8)
-                safe_ui_refresh()
-            except Exception as e:
-                print(f"[analytics] Peak chart runtime anomaly: {e}")
-
-            try:
-                fuel_m = get_fuel_profit_margins(auth, days=days)
-                if fuel_m:
-                    pie = build_fuel_pie(fuel_m)
-                    fuel_pie_container.content = ft.Column(controls=[
-                        ft.Text("Fuel Consumption Share", size=13, weight=ft.FontWeight.BOLD, color="#222"),
-                        ft.Container(content=pie, height=220, expand=True)
-                    ], spacing=8)
-
-                    profit_chart = build_profit_bar(fuel_m)
-                    profit_bar_container.content = ft.Column(controls=[
-                        ft.Text("Fuel Margin %", size=13, weight=ft.FontWeight.BOLD, color="#222"),
-                        ft.Container(content=profit_chart, height=220, expand=True)
-                    ], spacing=8)
-                safe_ui_refresh()
-            except Exception as e:
-                print(f"[analytics] Fuel distribution block layout exception: {e}")
-
-            try:
-                top_oils = get_top_oils(auth, days=days, limit=5)
-                if top_oils:
-                    oil_chart = build_oil_bar(top_oils)
-                    oil_bar_container.content = ft.Column(controls=[
-                        ft.Text(f"Top Selling Oils - Last {days}d", size=13, weight=ft.FontWeight.BOLD, color="#222"),
-                        oil_chart
-                    ], spacing=8)
-                safe_ui_refresh()
-            except Exception as e:
-                print(f"[analytics] Lubricant inventory matrix build failure: {e}")
-
-            try:
-                heat = get_heatmap(auth, days=days, product_type="fuel" if prod=="all" else prod)
-                if heat:
-                    grid = build_heatmap_grid(heat.get("data", []), heat.get("day_labels", []))
-                    heatmap_container.content = ft.Column(controls=[
-                        ft.Text(f"Demand Heatmap ({heat.get('product_type','').upper()})", size=13, weight=ft.FontWeight.BOLD, color="#222"),
-                        grid
-                    ], spacing=8)
-                safe_ui_refresh()
-            except Exception as e:
-                print(f"[analytics] Heatmap render matrix collapse: {e}")
-
-            try:
-                lb = get_attendant_leaderboard(auth, days=7 if days <= 7 else 30)
-                podium = lb.get("podium", [])
-                podium_container.controls.clear()
-
-                t1 = lb.get("top_1") or (podium[0] if len(podium) > 0 else None)
-                t2 = lb.get("top_2") or (podium[1] if len(podium) > 1 else None)
-                t3 = lb.get("top_3") or (podium[2] if len(podium) > 2 else None)
-                
-                podium_container.controls.append(make_podium_card(2, t2.get("attendant_name") if t2 else None, "2nd Place", f"₱{t2.get('total_revenue',0):,.0f}" if t2 else "₱0"))
-                podium_container.controls.append(make_podium_card(1, t1.get("attendant_name") if t1 else None, "Top Performer", f"₱{t1.get('total_revenue',0):,.0f}" if t1 else "₱0"))
-                podium_container.controls.append(make_podium_card(3, t3.get("attendant_name") if t3 else None, "3rd Place", f"₱{t3.get('total_revenue',0):,.0f}" if t3 else "₱0"))
-
-                rank_data = get_attendant_rankings(auth, days=days, product_type=prod, sort_by=attendant_sort, limit=15, include_breakdown=False)
-                rankings = rank_data.get("rankings", [])
-                
-                ranking_table.rows.clear()
-                for r in rankings:
-                    name_str = r.get("attendant_name", "")
-                    medal = r.get("medal") or ""
-                    
-                    ranking_table.rows.append(
-                        ft.DataRow(
-                            cells=[
-                                ft.DataCell(ft.Text(f"{r.get('rank')} {medal}")),
-                                ft.DataCell(ft.Text(name_str, weight=ft.FontWeight.BOLD)),
-                                ft.DataCell(ft.Text(f"₱{r.get('total_revenue', 0):,.2f}")),
-                                ft.DataCell(ft.Text(str(r.get('transaction_count', 0)))),
-                                ft.DataCell(ft.Text(f"{r.get('total_liters', 0):,.1f} L")),
-                                ft.DataCell(ft.Text(str(r.get('total_oil_pcs', 0)))),
-                                ft.DataCell(ft.Text(f"₱{r.get('avg_ticket', 0):,.2f}")),
-                                ft.DataCell(
-                                    ft.TextButton("Inspect Profile", on_click=lambda e, name=name_str: view_individual_performance(name))
-                                ),
-                            ]
-                        )
-                    )
-
-                if selected_attendant["name"]:
-                    view_individual_performance(selected_attendant["name"])
-                    
-                safe_ui_refresh()
-            except Exception as e:
-                print(f"[analytics] Error assembling attendant leaderboard matrix views: {e}")
-
+                print(f"[analytics] rankings refresh: {e}")
         page.run_thread(bg)
 
     days_dropdown.on_change = lambda e: load_data()
     product_dropdown.on_change = lambda e: load_data()
-    attendant_sort_dropdown.on_change = lambda e: load_data()
+    attendant_sort_dropdown.on_change = lambda e: refresh_rankings_only()
 
     def go_dashboard(e):
         from pages.admin_dashboard import dashboard_page
@@ -597,24 +610,21 @@ def analytics_page(page: ft.Page, auth: dict):
     header = ft.Container(
         content=ft.Row([
             ft.IconButton(icon=ft.Icons.ARROW_BACK, icon_color=TEXT_WHITE, on_click=go_dashboard),
-            ft.Text("Analytics Dashboard", color=TEXT_WHITE, size=20, weight=ft.FontWeight.BOLD),
+            ft.Text("Analytics Dashboard", color=TEXT_WHITE, size=22, weight=ft.FontWeight.BOLD),
             ft.Row([
-                ft.Text("U-Fuel", color=TEXT_WHITE, size=16, weight=ft.FontWeight.BOLD),
-                ft.Container(width=38, height=38, bgcolor=TEXT_WHITE, border_radius=18, clip_behavior=ft.ClipBehavior.HARD_EDGE,
-                             content=ft.Image(src="u-fuel_logo.jpg", fit=ft.BoxFit.CONTAIN, border_radius=18)),
+                ft.Text("U-Fuel", color=TEXT_WHITE, size=18, weight=ft.FontWeight.BOLD),
+                ft.Container(width=42, height=42, bgcolor=TEXT_WHITE, border_radius=20, clip_behavior=ft.ClipBehavior.HARD_EDGE, content=ft.Image(src="u-fuel_logo.jpg", fit=ft.BoxFit.CONTAIN, border_radius=20)),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        bgcolor=DARK_RED, padding=ft.Padding.symmetric(vertical=16, horizontal=20),
+        bgcolor=DARK_RED, padding=ft.Padding.symmetric(vertical=18, horizontal=24),
     )
-
+    
     footer = ft.Container(
         content=ft.Row([
-            ft.Container(content=ft.Row([ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16), ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)], spacing=6),
-                         bgcolor="#6B6B6B", border_radius=6, padding=ft.Padding.symmetric(vertical=8, horizontal=14), ink=True, on_click=go_logout),
+            ft.Container(content=ft.Row([ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16), ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)], spacing=6), bgcolor="#6B6B6B", border_radius=6, padding=ft.Padding.symmetric(vertical=8, horizontal=14), ink=True, on_click=go_logout),
             ft.Text("GAStoKITA", color=TEXT_WHITE, size=12, weight=ft.FontWeight.W_500),
             ft.Row([ft.Icon(ft.Icons.PERSON_OUTLINE, color=TEXT_WHITE, size=18), ft.Text(auth.get("name","ADMIN"), color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)], spacing=4),
-        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        bgcolor=DARK_RED, padding=ft.Padding.symmetric(vertical=14, horizontal=24),
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER), bgcolor=DARK_RED, padding=ft.Padding.symmetric(vertical=14, horizontal=24),
     )
 
     content = ft.Container(
