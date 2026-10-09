@@ -7,6 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from pydantic import BaseModel, Field
 
 BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
 load_dotenv(BACKEND_ENV)
@@ -20,32 +21,31 @@ def _get_client():
         _client = genai.Client(api_key=api_key)
     return _client
 
+class ReorderInsightsResponse(BaseModel):
+    urgency_explanation: str = Field(description="1-2 sentences explaining the urgency level with specific numbers.")
+    demand_insight: str = Field(description="1 sentence on what the trend and standard deviation imply.")
+    purchase_recommendation: str = Field(description="1 sentence with buy/delay advice, quantity, and reasoning.")
+    risk_factors: list[str] = Field(description="List of 2-3 operational or financial risk factors.")
+    action_items: list[str] = Field(description="List of 2-3 concrete steps for the station manager.")
+
 def get_ai_reorder_insights(fuel_data: dict) -> dict:
     prompt = f"""
-You are a fuel inventory advisor for a gas station in the Philippines.
+You are an expert fuel inventory advisor for a gas station in the Philippines.
 
-Analyze this fuel data and provide actionable insights.
+Analyze the following fuel metrics and provide clear, actionable inventory advice.
 
-DATA:
-Fuel: {fuel_data['fuel_name']}
-Current Stock: {fuel_data['current_stock']}L / {fuel_data['tank_capacity']}L capacity
-Average Daily Usage: {fuel_data['avg_daily_usage']}L (std dev: {fuel_data['usage_std_dev']}L)
-Trend: {fuel_data['trend']} over last 14 days
-Days Remaining: {fuel_data['days_remaining']}
-Reorder Point: {fuel_data['reorder_point']}L
-Safety Stock: {fuel_data['safety_stock']}L
-Lead Time: 3 days
-Current Date: {date.today().isoformat()}
-
-Return JSON with these exact keys:
-{{
-  "urgency_explanation": "1-2 sentences why this urgency level. Mention specific numbers.",
-  "demand_insight": "1 sentence on what the trend + std_dev means for this fuel.",
-  "purchase_recommendation": "1 sentence: buy/delay + quantity + reasoning",
-  "risk_factors": ["list", "of", "2-3 risks"],
-  "action_items": ["list", "of", "2-3 concrete steps for manager"]
-}}
+METRICS:
+- Fuel Type: {fuel_data['fuel_name']}
+- Current Stock: {fuel_data['current_stock']}L / {fuel_data['tank_capacity']}L capacity
+- Average Daily Usage: {fuel_data['avg_daily_usage']}L (Std Dev: {fuel_data['usage_std_dev']}L)
+- 14-Day Trend: {fuel_data['trend']}
+- Days Remaining: {fuel_data['days_remaining']} days
+- Reorder Point: {fuel_data['reorder_point']}L
+- Safety Stock: {fuel_data['safety_stock']}L
+- Delivery Lead Time: 3 days
+- Date: {date.today().isoformat()}
 """
+    resp = None
     try:
         client = _get_client()
         resp = client.models.generate_content(
@@ -53,7 +53,8 @@ Return JSON with these exact keys:
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.2,
-                response_mime_type="application/json"
+                response_mime_type="application/json",
+                response_schema=ReorderInsightsResponse,
             )
         )
         return json.loads(resp.text)
@@ -61,14 +62,13 @@ Return JSON with these exact keys:
     except Exception as e:
         print("\n=== GEMINI CALL FAILED ===", file=sys.stderr, flush=True)
         traceback.print_exc()
-        try:
+        
+        if resp and hasattr(resp, "text"):
             print("Response snippet:", resp.text[:300], file=sys.stderr)
-        except:
-            pass
         return {
-            "urgency_explanation": f"Stock at {fuel_data['current_stock']}L vs reorder point {fuel_data['reorder_point']}L",
-            "demand_insight": f"Trend is {fuel_data['trend']}",
-            "purchase_recommendation": "Review metrics manually",
-            "risk_factors": ["AI analysis unavailable"],
-            "action_items": ["Check dashboard"]
+            "urgency_explanation": f"Stock is at {fuel_data.get('current_stock', 0)}L relative to reorder point of {fuel_data.get('reorder_point', 0)}L.",
+            "demand_insight": f"Recent 14-day trend is classified as {fuel_data.get('trend', 'unknown')}.",
+            "purchase_recommendation": "Manual review required due to temporary insight service disruption.",
+            "risk_factors": ["Automated AI analytics temporarily unavailable"],
+            "action_items": ["Verify tank gauge levels manually", "Check pending purchase orders in system"]
         }
