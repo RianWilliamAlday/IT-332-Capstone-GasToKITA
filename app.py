@@ -4,7 +4,7 @@ import httpx, asyncio, socket
 from pages.select_pa import pa_selection
 
 AUTH = {"token": None, "role": None, "user": None}
-BASE_DIR = Path(__file__).parent if not getattr(sys, 'frozen', False) else Path(sys._MEIPASS)
+BASE_DIR = Path(_file_).parent if not getattr(sys, 'frozen', False) else Path(sys._MEIPASS)
 API_URL = "http://127.0.0.1:8000"
 RED = "#A61E22"
 
@@ -30,7 +30,7 @@ async def wait_for_backend():
     return False
 
 async def main(page: ft.Page):
-    page.title = "GasToKITA"
+    page.title = "GAStoKITA"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.padding = 0
     page.window.maximized = True
@@ -57,10 +57,6 @@ async def main(page: ft.Page):
             await page.shared_preferences.remove("gastokita.auth_token")
     except Exception as e:
         print(f"[AUTO-LOGIN] Error: {e}")
-
-    email_field = ft.TextField(hint_text="Enter your email", keyboard_type=ft.KeyboardType.EMAIL, border_radius=25, border_color="black", bgcolor="white", width=330, height=50)
-    password_field = ft.TextField(hint_text="Enter your password", password=True, can_reveal_password=True, border_radius=25, border_color="black", bgcolor="white", width=330, height=50)
-    status_text = ft.Text("", color="white", size=14)
 
     async def login_employee(e):
         status_text.value = "Logging in..."
@@ -98,16 +94,88 @@ async def main(page: ft.Page):
                 import traceback
                 traceback.print_exc()
 
+    email_field = ft.TextField(
+        label="EMAIL ADDRESS",
+        label_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+        hint_text="Enter your email",
+        hint_style=ft.TextStyle(color=ft.Colors.WHITE38),
+        keyboard_type=ft.KeyboardType.EMAIL,
+        filled=True,
+        fill_color=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
+        color=ft.Colors.WHITE,
+        border_color=ft.Colors.TRANSPARENT,
+        focused_border_color=RED,
+        cursor_color=ft.Colors.WHITE,
+        border_radius=12,
+        width=330,
+        height=50,
+        text_style=ft.TextStyle(size=14, color=ft.Colors.WHITE),
+    )
+    
+    password_field = ft.TextField(
+        label="PASSWORD",
+        label_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+        hint_text="Enter your password",
+        hint_style=ft.TextStyle(color=ft.Colors.WHITE38),
+        password=True,
+        can_reveal_password=True,
+        filled=True,
+        fill_color=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
+        color=ft.Colors.WHITE,
+        border_color=ft.Colors.TRANSPARENT,
+        focused_border_color=RED,
+        cursor_color=ft.Colors.WHITE,
+        border_radius=12,
+        width=330,
+        height=50,
+        text_style=ft.TextStyle(size=14, color=ft.Colors.WHITE),
+        on_submit=login_employee
+    )
+    
+    status_text = ft.Text("", color="white", size=14)
     header = ft.Container(bgcolor=RED, height=100, padding=20, content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[ft.Text("GAStoKITA", size=28, weight=ft.FontWeight.BOLD, color="white"), ft.Row(spacing=15, controls=[ft.Text("U-Fuel", size=28, weight=ft.FontWeight.BOLD, color="white"), ft.Container(width=70, height=70, bgcolor="white", border_radius=12, content=ft.Image(src="u-fuel_logo.jpg", fit=ft.BoxFit.CONTAIN))])]))
     footer = ft.Container(height=80, bgcolor=RED)
-    login_btn = ft.FilledButton("Login", width=130, height=45, on_click=login_employee, style=ft.ButtonStyle(bgcolor=RED, color="white", shape=ft.RoundedRectangleBorder(radius=25), text_style=ft.TextStyle(size=20, weight=ft.FontWeight.BOLD)))
-    login_card = ft.Container(width=460, height=420, border_radius=25, padding=20, bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.WHITE), border=ft.Border.all(1.2, ft.Colors.with_opacity(0.3, ft.Colors.WHITE)), blur=ft.Blur(5, 5, ft.BlurTileMode.MIRROR), shadow=ft.BoxShadow(blur_radius=20, color=ft.Colors.with_opacity(0.25, ft.Colors.BLACK)), content=ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15, controls=[ft.Text("Login", size=28, weight=ft.FontWeight.BOLD, color="white"), ft.Column(spacing=4, controls=[ft.Text("Email:", weight=ft.FontWeight.BOLD, color="white"), email_field]), ft.Column(spacing=4, controls=[ft.Text("Password:", weight=ft.FontWeight.BOLD, color="white"), password_field]), login_btn, status_text]))
+    
+    login_btn = ft.FilledButton(
+        "Login", 
+        width=330,
+        height=48, 
+        on_click=login_employee, 
+        style=ft.ButtonStyle(
+            bgcolor=RED, 
+            color="white", 
+            shape=ft.RoundedRectangleBorder(radius=12), 
+            text_style=ft.TextStyle(size=16, weight=ft.FontWeight.BOLD)
+        )
+    )
+    login_card = ft.Container(
+        width=460, 
+        height=380, 
+        border_radius=25, 
+        padding=25, 
+        bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.WHITE), 
+        border=ft.Border.all(1.2, ft.Colors.with_opacity(0.3, ft.Colors.WHITE)), 
+        blur=ft.Blur(5, 5, ft.BlurTileMode.MIRROR), 
+        shadow=ft.BoxShadow(blur_radius=20, color=ft.Colors.with_opacity(0.25, ft.Colors.BLACK)), 
+        content=ft.Column(
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER, 
+            spacing=16, 
+            controls=[
+                ft.Text("Login", size=24, weight=ft.FontWeight.BOLD, color="white"),
+                email_field, 
+                password_field, 
+                login_btn, 
+                status_text
+            ]
+        )
+    )
     page_content = ft.Column(spacing=0, expand=True, controls=[header, ft.Container(expand=True, alignment=ft.Alignment.CENTER, content=login_card), footer])
     page.add(ft.Stack(expand=True, fit=ft.StackFit.EXPAND, controls=[ft.Container(expand=True, image=ft.DecorationImage(src="background.jpg", fit=ft.BoxFit.COVER)), ft.Container(expand=True, bgcolor=ft.Colors.with_opacity(0.30, ft.Colors.BLACK)), page_content]))
     page.update()
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     if not is_backend_running():
         threading.Thread(target=run_backend, daemon=True).start()
         time.sleep(0.5)
     ft.run(main, assets_dir=str(BASE_DIR))
+127.0.0.1
