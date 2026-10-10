@@ -326,9 +326,14 @@ def get_unified_profit_margins(days: int = 30, session: Session = Depends(get_se
 
 @router.get("/revenue/summary")
 def get_revenue_summary(days: int = 30, session: Session = Depends(get_session)):
-    since = datetime.now() - timedelta(days=days)
+    if days == 1:
+        since = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        since = datetime.now() - timedelta(days=days)
+
     fuel_sql = text("SELECT COALESCE(SUM(total_amount),0), COALESCE(SUM(liters_sold),0), COUNT(*) FROM sale WHERE sold_at >= :since")
     oil_sql = text("SELECT COALESCE(SUM(total_amount),0), COALESCE(SUM(quantity),0), COUNT(*) FROM oil_sale WHERE sold_at >= :since")
+    
     f_rev, f_liters, f_cnt = session.execute(fuel_sql, {"since": since}).one()
     o_rev, o_qty, o_cnt = session.execute(oil_sql, {"since": since}).one()
     unified = get_unified_profit_margins(days=days, session=session)
@@ -336,10 +341,10 @@ def get_revenue_summary(days: int = 30, session: Session = Depends(get_session))
     
     return {
         "period_days": days,
-        "fuel": {"revenue": round(f_rev or 0,2), "liters": round(f_liters or 0,2), "transactions": f_cnt},
-        "oil": {"revenue": round(o_rev or 0,2), "quantity": int(o_qty or 0), "transactions": o_cnt},
+        "fuel": {"revenue": round(f_rev or 0, 2), "liters": round(f_liters or 0, 2), "transactions": f_cnt},
+        "oil": {"revenue": round(o_rev or 0, 2), "quantity": int(o_qty or 0), "transactions": o_cnt},
         "combined": {
-            "revenue": round((f_rev or 0) + (o_rev or 0),2),
+            "revenue": round((f_rev or 0) + (o_rev or 0), 2),
             "transactions": (f_cnt or 0) + (o_cnt or 0),
             "cost": summary["total_cost"],
             "profit": summary["total_profit"],

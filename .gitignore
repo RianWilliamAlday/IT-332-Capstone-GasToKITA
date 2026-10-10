@@ -6,5 +6,5 @@ gastokita.db
 backend/.env
 .cursor/
 .vscode/
-pages/optimization.py
+gg.py
 .env
