@@ -6,6 +6,7 @@ from enum import Enum
 class ProductType(str, Enum):
     FUEL = "fuel"
     OIL = "oil"
+    ALL = "all"
 
 class FuelBatchResponse(BaseModel):
     id: int
@@ -305,3 +306,13 @@ class UnifiedLowStockResponse(BaseModel):
     fuel_count: int
     oil_count: int
     items: List[UnifiedLowStockItem]
+
+class UnifiedExpenseItem(BaseModel):
+    id: int
+    source_type: Literal["operational", "fuel_restock", "oil_restock"]
+    category: str
+    description: str
+    amount: float
+    expense_date: datetime
+    recorded_by: Optional[str] = None
+    supplier: Optional[str] = None

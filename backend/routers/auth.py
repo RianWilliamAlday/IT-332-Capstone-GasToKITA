@@ -14,6 +14,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 GOOGLE_CLIENT_ID = os.getenv("CLIENT_ID")
 
 class AdminLoginRequest(BaseModel):
+    email: EmailStr
     password: str
 
 class EmployeeLoginRequest(BaseModel):
@@ -38,11 +39,13 @@ class TokenResponse(BaseModel):
 
 @router.post("/admin/login", response_model=TokenResponse)
 def admin_login(data: AdminLoginRequest, session: Session = Depends(get_session)):
-    admin = session.exec(select(User).where(User.role == UserRole.ADMIN)).first()
+    admin = session.exec(
+        select(User).where(User.email == data.email, User.role == UserRole.ADMIN)
+    ).first()
     if not admin:
-        raise HTTPException(404, "Admin account not set up")
+        raise HTTPException(401, "Invalid email or password")
     if not verify_password(data.password, admin.password_hash):
-        raise HTTPException(401, "Incorrect password")
+        raise HTTPException(401, "Invalid email or password")
     token = create_access_token({"sub": admin.id, "role": admin.role})
     return TokenResponse(
         access_token=token, 

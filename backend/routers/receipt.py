@@ -5,66 +5,53 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
 from escpos.printer import Win32Raw
 import io
-from ..db.database import get_session, Sale, OilSale
+from ..db.database import get_session, Sale, OilSale, Fuel, Pump, OilProduct
 
 router = APIRouter(prefix="/api/receipts", tags=["receipts"])
 
-def build_pdf_bytes(sale, sale_type):
+def build_pdf_bytes(sale, sale_type, fuel_name="Fuel", pump_name="", oil_name="Oil"):
     buf = io.BytesIO()
-    w, h = 80*mm, 200*mm
-    c = canvas.Canvas(buf, pagesize=(w,h))
-    y = h - 10*mm
-    c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(w/2, y, "GASTOKITA")
-    y -= 7*mm
+    w, h = 80 * mm, 200 * mm
+    c = canvas.Canvas(buf, pagesize=(w, h))
+    y = h - 10 * mm
 
-    def get(obj, *keys, default=""):
-        for k in keys:
-            if isinstance(obj, dict):
-                if k in obj and obj[k] not in (None, ""):
-                    return obj[k]
-            elif hasattr(obj, k):
-                v = getattr(obj, k)
-                if v not in (None, ""):
-                    return v
-        return default
-    
+    c.setFont("Helvetica-Bold", 16)
+    c.drawCentredString(w / 2, y, "GASTOKITA")
+    y -= 7 * mm
+
     c.setFont("Helvetica", 8)
-    c.drawCentredString(w/2, y, "U-Fuel Receipt")
-    y -= 5*mm
-    c.drawCentredString(w/2, y, "------------------------------")
-    y -= 7*mm
+    c.drawCentredString(w / 2, y, "U-Fuel Receipt")
+    y -= 5 * mm
+    c.drawCentredString(w / 2, y, "------------------------------")
+    y -= 7 * mm
     c.setFont("Helvetica", 8)
 
     if sale_type == "fuel":
-        fuel_name = get(sale, 'fuel_name', 'fuel_type', 'name', default='Fuel')
-        pump = get(sale, 'pump_id', 'pump_number', 'pump_name', default='')
-        pump_txt = f" {pump}" if pump else ""
-        liters = float(get(sale, 'liters_sold', 'liters', 'quantity', default=0))
-        price = float(get(sale, 'price_per_liter', 'price_per_unit', 'price', default=0))
-        line1 = f"{fuel_name}{pump_txt} {liters:.3f}L x P{price:.2f}"
+        item_label = pump_name if pump_name else fuel_name
+        liters = float(sale.liters_sold)
+        price = float(sale.price_per_liter)
+        line1 = f"{item_label} {liters:.3f}L x P{price:.2f}"
     else:
-        oil_name = get(sale, 'product_name', 'brand', default='Oil')
-        qty = get(sale, 'quantity', 'liters_sold', default=1)
-        price = float(get(sale, 'price_per_unit', 'price', default=0))
+        qty = sale.quantity
+        price = float(sale.price_per_unit)
         line1 = f"{oil_name} {qty} x P{price:.2f}"
 
-    c.drawString(5*mm, y, line1)
-    y -= 5*mm
-    c.drawString(5*mm, y, f"Due:  P{sale.total_amount:.2f}")
-    y -= 5*mm
-    c.drawString(5*mm, y, f"Paid: P{sale.amount_paid:.2f}")
-    y -= 8*mm
+    c.drawString(5 * mm, y, line1)
+    y -= 5 * mm
+    c.drawString(5 * mm, y, f"Due:  P{sale.total_amount:.2f}")
+    y -= 5 * mm
+    c.drawString(5 * mm, y, f"Paid: P{sale.amount_paid:.2f}")
+    y -= 8 * mm
     c.setFont("Helvetica-Bold", 14)
-    c.drawCentredString(w/2, y, f"P {sale.change_given:.2f}")
-    y -= 6*mm
+    c.drawCentredString(w / 2, y, f"P {sale.change_given:.2f}")
+    y -= 6 * mm
     c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(w/2, y, "CHANGE")
-    y -= 8*mm
+    c.drawCentredString(w / 2, y, "CHANGE")
+    y -= 8 * mm
     c.setFont("Helvetica", 8)
-    c.drawCentredString(w/2, y, "Thank you!")
-    y -= 5*mm
-    c.drawCentredString(w/2, y, "------------------------------")
+    c.drawCentredString(w / 2, y, "Thank you!")
+    y -= 5 * mm
+    c.drawCentredString(w / 2, y, "------------------------------")
 
     c.showPage()
     c.save()
@@ -86,14 +73,38 @@ def check_printer(name="XP-58H"):
 @router.get("/{sale_type}/{sale_id}/pdf")
 def get_receipt_pdf(sale_type: str, sale_id: int, session: Session = Depends(get_session)):
     if sale_type == "fuel":
-        sale = session.get(Sale, sale_id)
+        result = session.exec(
+            select(Sale, Fuel.name.label("fuel_name"), Pump.name.label("pump_name"))
+            .join(Fuel, Sale.fuel_id == Fuel.id)
+            .join(Pump, Sale.pump_id == Pump.id)
+            .where(Sale.id == sale_id)
+        ).first()
+
+        if not result:
+            raise HTTPException(404, "Sale not found")
+
+        sale_obj, fuel_name, pump_name = result
+        pdf = build_pdf_bytes(sale_obj, sale_type, fuel_name=fuel_name, pump_name=pump_name)
+
     else:
-        sale = session.get(OilSale, sale_id)
-    if not sale:
-        raise HTTPException(404, "Sale not found")
-    pdf = build_pdf_bytes(sale, sale_type)
-    return StreamingResponse(pdf, media_type="application/pdf",
-        headers={"Content-Disposition": f"inline; filename=receipt_{sale_type}_{sale_id}.pdf"})
+        result = session.exec(
+            select(OilSale, OilProduct)
+            .join(OilProduct, OilSale.oil_product_id == OilProduct.id)
+            .where(OilSale.id == sale_id)
+        ).first()
+
+        if not result:
+            raise HTTPException(404, "Sale not found")
+
+        sale_obj, oil_product = result
+        product_name = f"{oil_product.brand} {oil_product.name}".strip()
+        pdf = build_pdf_bytes(sale_obj, sale_type, oil_name=product_name)
+
+    return StreamingResponse(
+        pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=receipt_{sale_type}_{sale_id}.pdf"}
+    )
 
 @router.post("/print")
 def print_receipt_direct(payload: dict):

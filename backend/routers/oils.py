@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
 from ..db.database import get_session, OilProduct, OilRestockLog
+from ..services.auth import get_current_user, User
 
 router = APIRouter(prefix="/oils", tags=["Oils"])
 
@@ -22,9 +23,27 @@ class OilRestockRequest(BaseModel):
     supplier: Optional[str] = None
 
 @router.post("/", response_model=OilProduct)
-def create_oil(data: OilCreate, session: Session = Depends(get_session)):
+def create_oil(
+    data: OilCreate, 
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
     oil = OilProduct(**data.model_dump(), updated_at=datetime.now())
     session.add(oil)
+    session.flush()
+
+    if data.stock > 0 and data.cost > 0:
+        total_initial_cost = round(data.stock * data.cost, 2)
+        initial_log = OilRestockLog(
+            oil_product_id=oil.id,
+            quantity_added=data.stock,
+            total_cost=total_initial_cost,
+            supplier="Initial Inventory Creation",
+            restocked_by=current_user.id,
+            restocked_at=datetime.now()
+        )
+        session.add(initial_log)
+
     session.commit()
     session.refresh(oil)
     return oil
@@ -61,9 +80,14 @@ def restock_oil(oil_id: int, data: OilRestockRequest, session: Session = Depends
     if data.quantity_added <= 0:
         raise HTTPException(400, "Quantity must be positive")
 
-    oil.stock += data.quantity_added
-    if data.quantity_added > 0:
-        oil.cost = data.total_cost / data.quantity_added
+    current_total_value = oil.stock * oil.cost
+    new_total_value = current_total_value + data.total_cost
+    new_total_stock = oil.stock + data.quantity_added
+
+    if new_total_stock > 0:
+        oil.cost = round(new_total_value / new_total_stock, 2)
+
+    oil.stock = new_total_stock
     oil.updated_at = datetime.now()
 
     log = OilRestockLog(
@@ -80,5 +104,6 @@ def restock_oil(oil_id: int, data: OilRestockRequest, session: Session = Depends
     return {
         "message": f"Restocked {data.quantity_added} pcs of {oil.brand} {oil.name}",
         "new_stock": oil.stock,
+        "weighted_avg_cost": oil.cost,
         "needs_restock": oil.stock <= oil.low_stock_threshold
     }
