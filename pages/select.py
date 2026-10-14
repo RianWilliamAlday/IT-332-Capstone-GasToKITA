@@ -27,6 +27,12 @@ def select_transaction(page: ft.Page, auth: dict):
                 page.controls.clear()
                 page.add(pa_selection(page, auth))
                 page.update()
+
+    def go_history(e):
+            from pages.c_history import cashier_history
+            page.controls.clear()
+            page.add(cashier_history(page, auth))
+            page.update()
     
     header = ft.Container(
                 bgcolor=RED, height=100, padding=20,
@@ -45,11 +51,39 @@ def select_transaction(page: ft.Page, auth: dict):
                     ],
                 ),
             )
-    footer = ft.Container(height=80,bgcolor=RED, padding=ft.Padding.symmetric(vertical=14, horizontal=24),content=ft.Row([
-                            ft.Container(content=ft.Row([ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16), ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)], spacing=6), bgcolor="#6B6B6B", border_radius=6, padding=ft.Padding.symmetric(vertical=8, horizontal=14), ink=True, on_click=go_logout)
-                            ]
-                        )
-                    )
+    footer = ft.Container(
+        height=80,
+        bgcolor=RED,
+        padding=ft.Padding.symmetric(vertical=14, horizontal=24),
+        content=ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.Container(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.HISTORY, color=TEXT_WHITE, size=16),
+                        ft.Text("HISTORY", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)
+                    ], spacing=6),
+                    bgcolor="#6B6B6B",
+                    border_radius=6,
+                    padding=ft.Padding.symmetric(vertical=8, horizontal=14),
+                    ink=True,
+                    on_click=go_history
+                ),
+                ft.Container(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16),
+                        ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)
+                    ], spacing=6),
+                    bgcolor="#6B6B6B",
+                    border_radius=6,
+                    padding=ft.Padding.symmetric(vertical=8, horizontal=14),
+                    ink=True,
+                    on_click=go_logout
+                )
+            ]
+        )
+    )
 
     def on_pump(e):
         print("Pump Gas clicked by:", auth.get("user"), "Attendant:", auth.get("selected_attendant"))
@@ -63,6 +97,11 @@ def select_transaction(page: ft.Page, auth: dict):
         page.add(build_oil_page(page, auth))
         page.update()
 
+    def on_multi(e):
+        page.controls.clear()
+        from pages.select_multi import build_multi_page
+        page.add(build_multi_page(page, auth))
+        page.update()
 
     def card(title, icon_widget, handler):
         return ft.Container(
@@ -93,8 +132,9 @@ def select_transaction(page: ft.Page, auth: dict):
         expand=True, bgcolor="white", alignment=ft.Alignment(0,0),
         content=ft.Row(
             alignment=ft.MainAxisAlignment.CENTER, spacing=50,
-            controls=[card("Pump Gas", ft.Icon(ft.Icons.LOCAL_GAS_STATION, size=85, color=RED),
-                     on_pump),card("Oils", ft.Icon(ft.Icons.WATER_DROP, size=85, color=RED), on_oils)]
+            controls=[card("Pump Gas", ft.Icon(ft.Icons.LOCAL_GAS_STATION, size=85, color=RED),on_pump),
+            card("Oils", ft.Icon(ft.Icons.WATER_DROP, size=85, color=RED), on_oils),
+            card("Multiple Items", ft.Icon(ft.Icons.SHOPPING_BAG, size=70, color=RED), on_multi),]
         ))
 
     return ft.Column(spacing=0, expand=True, controls=[header, body, footer])

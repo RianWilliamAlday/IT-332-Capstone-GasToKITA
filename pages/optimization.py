@@ -5,9 +5,6 @@ from pages.api_client import (
     get_low_stock,
 )
 
-# ==============================================================================
-# UI HELPERS & THEMING (matches analytics.py / history.py)
-# ==============================================================================
 DARK_RED = "#8B0000"
 TEXT_WHITE = "#FFFFFF"
 
@@ -15,8 +12,8 @@ COLOR_GREEN = "#2E7D32"
 COLOR_BLUE = "#1565C0"
 COLOR_PURPLE = "#6A1B9A"
 COLOR_RED = "#C62828"
-COLOR_AMBER = "#F5C243"        # same yellow as COLOR_DIESEL in analytics.py
-COLOR_AMBER_TEXT = "#A66F00"   # darker amber for text on white
+COLOR_AMBER = "#F5C243"
+COLOR_AMBER_TEXT = "#A66F00" 
 
 SHADOW = ft.BoxShadow(blur_radius=4, color="#00000015", offset=ft.Offset(0, 2))
 
@@ -68,9 +65,6 @@ def create_kpi_card(title: str, value: str, icon: str, icon_color: str, value_co
         shadow=SHADOW,
     )
 
-# ==============================================================================
-# MAIN PAGE
-# ==============================================================================
 def optimization_page(page: ft.Page, auth: dict):
     page.title = "Inventory Optimization"
     page.theme_mode = ft.ThemeMode.LIGHT
@@ -84,9 +78,10 @@ def optimization_page(page: ft.Page, auth: dict):
     latest_request = {"id": 0}
 
     kpi_row = ft.Row(spacing=12, wrap=True)
-    inventory_cards_grid = ft.Column(spacing=12, expand=True, scroll=ft.ScrollMode.AUTO)
-    low_stock_list_view = ft.ListView(spacing=8, expand=True, padding=10)
-    reorder_table_container = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True)
+
+    inventory_cards_grid = ft.Column(spacing=12)
+    low_stock_list_view = ft.Column(spacing=8)
+    reorder_table_container = ft.Column()
 
     loading_bar = ft.ProgressBar(color=DARK_RED, bgcolor="#E0E0E0", visible=False)
     status_text = ft.Text("", size=12, color=COLOR_RED, visible=False)
@@ -98,10 +93,18 @@ def optimization_page(page: ft.Page, auth: dict):
             print(f"[inventory] update failed: {ue}")
 
     def render_dashboard(metrics, low_stock_data, show_ai):
-        # Update KPIs
-        critical_cnt = sum(1 for m in metrics if m.get("urgency") == "critical")
-        warning_cnt = sum(1 for m in metrics if m.get("urgency") == "warning")
-        total_reorder_cost = sum((m.get("cost_of_order") or 0) for m in metrics)
+        # 1. Normalize metrics payload if returned as dict or None
+        if isinstance(metrics, dict):
+            metrics = metrics.get("items") or metrics.get("metrics") or metrics.get("data") or []
+        elif not isinstance(metrics, list):
+            metrics = []
+
+        if not isinstance(low_stock_data, dict):
+            low_stock_data = {}
+
+        critical_cnt = sum(1 for m in metrics if isinstance(m, dict) and m.get("urgency") == "critical")
+        warning_cnt = sum(1 for m in metrics if isinstance(m, dict) and m.get("urgency") == "warning")
+        total_reorder_cost = sum((m.get("cost_of_order") or 0) for m in metrics if isinstance(m, dict))
 
         kpi_row.controls = [
             create_kpi_card("Total Items", str(len(metrics)), ft.Icons.INVENTORY_2, COLOR_BLUE, COLOR_BLUE),
@@ -110,9 +113,11 @@ def optimization_page(page: ft.Page, auth: dict):
             create_kpi_card("Estimated Reorder Cost", f"₱{total_reorder_cost:,.2f}", ft.Icons.ATTACH_MONEY, COLOR_GREEN, COLOR_GREEN),
         ]
 
-        # Update Cards
         inventory_cards_grid.controls.clear()
         for m in metrics:
+            if not isinstance(m, dict):
+                continue
+
             urgency = m.get("urgency") or "normal"
             style = URGENCY_COLORS.get(urgency, URGENCY_COLORS["normal"])
             trend = m.get("trend") or "stable"
@@ -123,21 +128,25 @@ def optimization_page(page: ft.Page, auth: dict):
             capacity = m.get("tank_capacity") or m.get("max_stock_level") or 1.0
             stock_ratio = min(1.0, max(0.0, (m.get("current_stock") or 0) / capacity))
 
+            avg_usage = m.get('avg_daily_usage', 0)
+            unit = m.get('unit', '')
+            std_dev = m.get('usage_std_dev', 0)
+
             metric_cols = ft.Row(
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 controls=[
                     ft.Column([
                         ft.Text("Stock Level", size=11, color="#666666"),
-                        ft.Text(f"{m.get('current_stock')} / {capacity} {m.get('unit')}", weight=ft.FontWeight.BOLD, color="#222222"),
+                        ft.Text(f"{m.get('current_stock', 0)} / {capacity} {unit}", weight=ft.FontWeight.BOLD, color="#222222"),
                         ft.ProgressBar(value=stock_ratio, color=style["badge"], bgcolor="#E0E0E0", width=160),
                     ]),
                     ft.Column([
                         ft.Text("Avg Daily / StdDev", size=11, color="#666666"),
-                        ft.Text(f"{m.get('avg_daily_usage')}{m.get('unit')}/d (±{m.get('usage_std_dev')})", weight=ft.FontWeight.W_500, color="#222222"),
+                        ft.Text(f"{avg_usage}{unit}/d (±{std_dev})", weight=ft.FontWeight.W_500, color="#222222"),
                     ]),
                     ft.Column([
                         ft.Text("Days Left", size=11, color="#666666"),
-                        ft.Text(f"~{m.get('days_remaining')} days", weight=ft.FontWeight.BOLD, color=COLOR_AMBER_TEXT if urgency == "warning" else style["badge"]),
+                        ft.Text(f"~{m.get('days_remaining', 0)} days", weight=ft.FontWeight.BOLD, color=COLOR_AMBER_TEXT if urgency == "warning" else style["badge"]),
                     ]),
                     ft.Column([
                         ft.Text("Trend", size=11, color="#666666"),
@@ -147,9 +156,18 @@ def optimization_page(page: ft.Page, auth: dict):
             )
 
             ai_section = ft.Container()
-            if show_ai and "ai_urgency_explanation" in m:
-                risk_chips = [ft.Chip(label=ft.Text(r, size=10, color="#222222"), bgcolor="#FFCDD2") for r in m.get("ai_risk_factors", [])]
-                action_items = [ft.Text(f"• {act}", size=12, color="#333333") for act in m.get("ai_action_items", [])]
+            has_ai_fields = any(k.startswith("ai_") for k in m if m.get(k) is not None)
+            if show_ai and has_ai_fields:
+                # `or []` guarantees empty list when JSON value is null
+                risk_factors = m.get("ai_risk_factors") or []
+                action_items_raw = m.get("ai_action_items") or []
+
+                risk_chips = [ft.Chip(label=ft.Text(str(r), size=10, color="#222222"), bgcolor="#FFCDD2") for r in risk_factors if r]
+                action_items = [ft.Text(f"• {act}", size=12, color="#333333") for act in action_items_raw if act]
+
+                ai_urgency = m.get("ai_urgency_explanation") or "N/A"
+                ai_demand = m.get("ai_demand_insight") or "N/A"
+                ai_rec = m.get("ai_purchase_recommendation") or "N/A"
 
                 ai_section = ft.Container(
                     margin=ft.Margin.only(top=10),
@@ -160,9 +178,9 @@ def optimization_page(page: ft.Page, auth: dict):
                     content=ft.Column(
                         controls=[
                             ft.Row([ft.Icon(ft.Icons.AUTO_AWESOME, color=DARK_RED, size=16), ft.Text("AI Optimization Insights", weight=ft.FontWeight.BOLD, size=12, color="#222222")], spacing=6),
-                            ft.Text(f"Urgency: {m.get('ai_urgency_explanation')}", size=12, color="#333333"),
-                            ft.Text(f"Demand: {m.get('ai_demand_insight')}", size=12, color="#333333"),
-                            ft.Text(f"Recommendation: {m.get('ai_purchase_recommendation')}", size=12, weight=ft.FontWeight.W_600, color=DARK_RED),
+                            ft.Text(f"Urgency: {ai_urgency}", size=12, color="#333333"),
+                            ft.Text(f"Demand: {ai_demand}", size=12, color="#333333"),
+                            ft.Text(f"Recommendation: {ai_rec}", size=12, weight=ft.FontWeight.W_600, color=DARK_RED),
                             ft.Row(controls=risk_chips, wrap=True) if risk_chips else ft.Container(),
                             ft.Column(controls=[ft.Text("Action Items:", weight=ft.FontWeight.BOLD, size=11, color="#222222")] + action_items) if action_items else ft.Container(),
                         ],
@@ -181,8 +199,8 @@ def optimization_page(page: ft.Page, auth: dict):
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         controls=[
                             ft.Row([
-                                ft.Icon(ft.Icons.LOCAL_GAS_STATION if ptype == "fuel" else ft.Icons.OIL_BARREL, color=type_color),
-                                ft.Text(m.get("product_name"), size=16, weight=ft.FontWeight.BOLD, color="#222222"),
+                                ft.Icon(ft.Icons.LOCAL_GAS_STATION if ptype == "fuel" else ft.Icons.WATER_DROP, color=type_color),
+                                ft.Text(m.get("product_name") or "Unknown Product", size=16, weight=ft.FontWeight.BOLD, color="#222222"),
                                 ft.Container(
                                     content=ft.Text(ptype.upper(), size=10, color="white", weight=ft.FontWeight.BOLD),
                                     bgcolor=type_color,
@@ -200,13 +218,14 @@ def optimization_page(page: ft.Page, auth: dict):
             )
             inventory_cards_grid.controls.append(card_item)
 
-        # Update Low Stock
         low_stock_list_view.controls.clear()
-        low_items = low_stock_data.get("items", [])
+        low_items = (low_stock_data.get("items") or []) if isinstance(low_stock_data, dict) else []
         if not low_items:
             low_stock_list_view.controls.append(ft.Container(padding=20, content=ft.Text("No low stock alerts for selected criteria.", italic=True, color="#777777")))
         else:
             for item in low_items:
+                if not isinstance(item, dict):
+                    continue
                 item_urgency = item.get("urgency") or "warning"
                 low_stock_list_view.controls.append(
                     ft.ListTile(
@@ -221,20 +240,21 @@ def optimization_page(page: ft.Page, auth: dict):
                     )
                 )
 
-        # Update Reorder Table
         rows = []
         for m in metrics:
+            if not isinstance(m, dict):
+                continue
             rows.append(
                 ft.DataRow(
                     cells=[
-                        ft.DataCell(ft.Text(m.get("product_name"), weight=ft.FontWeight.W_500)),
-                        ft.DataCell(ft.Text(f"{m.get('reorder_point')} {m.get('unit')}")),
-                        ft.DataCell(ft.Text(f"{m.get('safety_stock')} {m.get('unit')}")),
-                        ft.DataCell(ft.Text(f"{m.get('economic_order_qty')} {m.get('unit')}")),
-                        ft.DataCell(ft.Text(f"{m.get('suggested_quantity')} {m.get('unit')}", weight=ft.FontWeight.BOLD if m.get("should_reorder") else ft.FontWeight.NORMAL)),
+                        ft.DataCell(ft.Text(m.get("product_name") or "", weight=ft.FontWeight.W_500)),
+                        ft.DataCell(ft.Text(f"{m.get('reorder_point', 0)} {m.get('unit', '')}")),
+                        ft.DataCell(ft.Text(f"{m.get('safety_stock', 0)} {m.get('unit', '')}")),
+                        ft.DataCell(ft.Text(f"{m.get('economic_order_qty', 0)} {m.get('unit', '')}")),
+                        ft.DataCell(ft.Text(f"{m.get('suggested_quantity', 0)} {m.get('unit', '')}", weight=ft.FontWeight.BOLD if m.get("should_reorder") else ft.FontWeight.NORMAL)),
                         ft.DataCell(ft.Text(f"₱{(m.get('cost_of_order') or 0):,.2f}", weight=ft.FontWeight.BOLD, color=DARK_RED)),
-                        ft.DataCell(ft.Text(str(m.get("suggested_reorder_date")))),
-                        ft.DataCell(ft.Text(f"{m.get('days_of_supply_after_reorder')} days")),
+                        ft.DataCell(ft.Text(str(m.get("suggested_reorder_date") or "N/A"))),
+                        ft.DataCell(ft.Text(f"{m.get('days_of_supply_after_reorder', 0)} days")),
                     ]
                 )
             )
@@ -257,7 +277,6 @@ def optimization_page(page: ft.Page, auth: dict):
         reorder_table_container.controls = [ft.Row([reorder_table], scroll=ft.ScrollMode.AUTO)]
 
     def refresh_dashboard(e=None):
-        # The AI endpoint calls Gemini once per flagged item, so load in a background thread.
         latest_request["id"] += 1
         request_id = latest_request["id"]
         product_type = selected_product_type
@@ -277,7 +296,7 @@ def optimization_page(page: ft.Page, auth: dict):
                 low_stock_data = get_low_stock(auth, include_warning=warn_on, product_type=product_type)
 
                 if request_id != latest_request["id"]:
-                    return  # a newer refresh was started, drop this result
+                    return
                 render_dashboard(metrics, low_stock_data, ai_on)
             except Exception as ex:
                 if request_id != latest_request["id"]:
@@ -292,7 +311,6 @@ def optimization_page(page: ft.Page, auth: dict):
 
         page.run_thread(bg)
 
-    # Event Handlers
     def on_type_change(e):
         nonlocal selected_product_type
         selected_product_type = e.control.value
@@ -324,7 +342,6 @@ def optimization_page(page: ft.Page, auth: dict):
             page.add(ft.Container(expand=True, alignment=ft.Alignment.CENTER, content=ft.Text("Logged out securely.")))
         page.update()
 
-    # Controls setup
     type_dropdown = ft.DropdownM2(
         label="Product Type", value="all", filled=True, fill_color="white",
         border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED,
@@ -337,7 +354,7 @@ def optimization_page(page: ft.Page, auth: dict):
     )
     type_dropdown.on_change = on_type_change
 
-    ai_switch = ft.Switch(label="AI Insights", value=False, active_color=DARK_RED)
+    ai_switch = ft.Switch(label="AI Reorder Suggestions", value=False, active_color=DARK_RED)
     ai_switch.on_change = on_ai_toggle
 
     warning_switch = ft.Switch(label="Include Warnings in Low Stock", value=True, active_color=DARK_RED)
@@ -345,9 +362,6 @@ def optimization_page(page: ft.Page, auth: dict):
 
     refresh_btn = ft.IconButton(icon=ft.Icons.REFRESH, icon_color=DARK_RED, tooltip="Sync data", on_click=refresh_dashboard)
 
-    # --------------------------------------------------------------------------
-    # HEADER, FILTERS, FOOTER
-    # --------------------------------------------------------------------------
     header = ft.Container(
         content=ft.Row([
             ft.IconButton(icon=ft.Icons.ARROW_BACK, icon_color=TEXT_WHITE, on_click=go_dashboard),
@@ -395,49 +409,83 @@ def optimization_page(page: ft.Page, auth: dict):
         shadow=SHADOW,
     )
 
-    # --------------------------------------------------------------------------
-    # TAB CONTROLLER (Flet TabBar + TabBarView)
-    # --------------------------------------------------------------------------
-    tabs_control = ft.Tabs(
-        length=3,
-        content=ft.Column(
-            controls=[
-                ft.TabBar(
-                    indicator_color=DARK_RED,
-                    label_color=DARK_RED,
-                    unselected_label_color="#757575",
-                    tabs=[
-                        ft.Tab(label="Optimization Insights", icon=ft.Icons.ANALYTICS),
-                        ft.Tab(label="Low Stock Monitor", icon=ft.Icons.WARNING_AMBER),
-                        ft.Tab(label="EOQ & Reorder Planner", icon=ft.Icons.TABLE_CHART),
-                    ]
-                ),
-                ft.TabBarView(
-                    controls=[
-                        ft.Container(padding=10, content=inventory_cards_grid),
-                        ft.Container(padding=10, content=low_stock_list_view),
-                        ft.Container(padding=10, content=reorder_table_container),
-                    ],
-                    expand=True,
-                ),
-            ],
-            expand=True,
-        ),
-        expand=True,
+    # --- Custom Tab Controller (Version-proof & Fully Scrollable) ---
+    active_tab = "insights"
+    tab_content = ft.Container(padding=ft.Padding.only(top=15), content=inventory_cards_grid)
+
+    def set_tab(tab_name: str):
+        nonlocal active_tab
+        active_tab = tab_name
+
+        # Highlight selected tab button
+        btn_insights.bgcolor = DARK_RED if active_tab == "insights" else "#E0E0E0"
+        btn_insights.content.controls[0].color = "white" if active_tab == "insights" else "#555555"
+        btn_insights.content.controls[1].color = "white" if active_tab == "insights" else "#555555"
+
+        btn_low_stock.bgcolor = DARK_RED if active_tab == "low_stock" else "#E0E0E0"
+        btn_low_stock.content.controls[0].color = "white" if active_tab == "low_stock" else "#555555"
+        btn_low_stock.content.controls[1].color = "white" if active_tab == "low_stock" else "#555555"
+
+        btn_planner.bgcolor = DARK_RED if active_tab == "planner" else "#E0E0E0"
+        btn_planner.content.controls[0].color = "white" if active_tab == "planner" else "#555555"
+        btn_planner.content.controls[1].color = "white" if active_tab == "planner" else "#555555"
+
+        # Switch visible tab content
+        if active_tab == "insights":
+            tab_content.content = inventory_cards_grid
+        elif active_tab == "low_stock":
+            tab_content.content = low_stock_list_view
+        else:
+            tab_content.content = reorder_table_container
+
+        safe_update()
+
+    btn_insights = ft.Container(
+        content=ft.Row([
+            ft.Icon(ft.Icons.ANALYTICS, size=16, color="white"),
+            ft.Text("Optimization Insights", size=13, weight=ft.FontWeight.BOLD, color="white")
+        ], spacing=6, tight=True),
+        bgcolor=DARK_RED, border_radius=8,
+        padding=ft.Padding.symmetric(horizontal=16, vertical=10),
+        ink=True, on_click=lambda e: set_tab("insights")
     )
+
+    btn_low_stock = ft.Container(
+        content=ft.Row([
+            ft.Icon(ft.Icons.WARNING_AMBER, size=16, color="#555555"),
+            ft.Text("Low Stock Monitor", size=13, weight=ft.FontWeight.BOLD, color="#555555")
+        ], spacing=6, tight=True),
+        bgcolor="#E0E0E0", border_radius=8,
+        padding=ft.Padding.symmetric(horizontal=16, vertical=10),
+        ink=True, on_click=lambda e: set_tab("low_stock")
+    )
+
+    btn_planner = ft.Container(
+        content=ft.Row([
+            ft.Icon(ft.Icons.TABLE_CHART, size=16, color="#555555"),
+            ft.Text("EOQ & Reorder Planner", size=13, weight=ft.FontWeight.BOLD, color="#555555")
+        ], spacing=6, tight=True),
+        bgcolor="#E0E0E0", border_radius=8,
+        padding=ft.Padding.symmetric(horizontal=16, vertical=10),
+        ink=True, on_click=lambda e: set_tab("planner")
+    )
+
+    tabs_row = ft.Row(controls=[btn_insights, btn_low_stock, btn_planner], spacing=10, wrap=True)
 
     content = ft.Container(
         content=ft.Column(
             controls=[
                 kpi_row,
-                ft.Container(height=8),
+                ft.Container(height=16),
                 filters_section,
                 loading_bar,
                 status_text,
-                ft.Container(height=8),
-                tabs_control,
+                ft.Container(height=16),
+                tabs_row,
+                tab_content,
             ],
             spacing=0,
+            scroll=ft.ScrollMode.ADAPTIVE,
             expand=True,
         ),
         padding=ft.Padding.all(24),
