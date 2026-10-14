@@ -1,12 +1,12 @@
 import flet as ft
-from pages.api_client import create_fuel_sale, create_oil_sale
+from pages.api_client import create_fuel_sale, create_oil_sale, submit_multi_sale
 
 RED = "#A61E22"
 LIGHT_GRAY = "#E9E9E9"
 NAVY_COLOR = "#0F3057"
 GREEN_COLOR = "#006400"
 
-def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None, ):
+def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None):
     page.title = "POS - Payment"
     page.bgcolor = LIGHT_GRAY
     page.padding = 0
@@ -62,10 +62,16 @@ def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None, ):
             paid["value"] = 0
             refresh()
             return
+
         if tx_type == "fuel":
             from pages.select_gas import build_pump_page
             page.controls.clear()
             page.add(build_pump_page(page, auth))
+            page.update()
+        elif tx_type == "multi":
+            from pages.select_multi import build_multi_page
+            page.controls.clear()
+            page.add(build_multi_page(page, auth))
             page.update()
         else:
             from pages.select_oil import build_oil_page
@@ -162,6 +168,9 @@ def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None, ):
         def process_api_call():
             change = paid["value"] - total_due
             attendant = auth.get("selected_attendant") or auth.get("name") or auth.get("user") or "Attendant 1"
+            if isinstance(attendant, dict):
+                attendant = attendant.get("name", "Attendant 1")
+            
             payment_method = "cash"
 
             try:
@@ -170,6 +179,9 @@ def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None, ):
                     liters = transaction.get("liters", total_due / 60.0)
                     result = create_fuel_sale(auth, pump_id, liters, attendant, payment_method, paid["value"])
                     print(f"[SALE OK] Fuel: {result}")
+                elif tx_type == "multi":
+                    result = submit_multi_sale(auth, paid["value"], payment_method)
+                    print(f"[SALE OK] Multi: {result}")
                 else:
                     oil_id = transaction.get("oil_id")
                     qty = transaction.get("quantity", 1)
@@ -189,6 +201,7 @@ def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None, ):
                 page.update()
 
             except Exception as ex:
+                print(f"[POS SUBMIT EXCEPTION] {ex}")
                 processing["busy"] = False
                 body.content = default_body_content
                 show_snack(f"Sale failed: {ex}", bgcolor=RED)
