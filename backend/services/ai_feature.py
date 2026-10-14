@@ -28,21 +28,26 @@ class ReorderInsightsResponse(BaseModel):
     risk_factors: list[str] = Field(description="List of 2-3 operational or financial risk factors.")
     action_items: list[str] = Field(description="List of 2-3 concrete steps for the station manager.")
 
-def get_ai_reorder_insights(fuel_data: dict) -> dict:
-    prompt = f"""
-You are an expert fuel inventory advisor for a gas station in the Philippines.
+def get_ai_reorder_insights(item_data: dict) -> dict:
+    product_name = item_data.get("product_name") or item_data.get("fuel_name") or "Inventory Item"
+    product_type = item_data.get("product_type", "fuel")
+    unit = item_data.get("unit") or ("L" if product_type == "fuel" else "pcs")
+    capacity = item_data.get("tank_capacity") or item_data.get("max_stock_level") or 0.0
 
-Analyze the following fuel metrics and provide clear, actionable inventory advice.
+    prompt = f"""
+You are an expert inventory advisor for a gas station and auto service business in the Philippines.
+
+Analyze the following {product_type} product metrics and provide clear, actionable inventory advice.
 
 METRICS:
-- Fuel Type: {fuel_data['fuel_name']}
-- Current Stock: {fuel_data['current_stock']}L / {fuel_data['tank_capacity']}L capacity
-- Average Daily Usage: {fuel_data['avg_daily_usage']}L (Std Dev: {fuel_data['usage_std_dev']}L)
-- 14-Day Trend: {fuel_data['trend']}
-- Days Remaining: {fuel_data['days_remaining']} days
-- Reorder Point: {fuel_data['reorder_point']}L
-- Safety Stock: {fuel_data['safety_stock']}L
-- Delivery Lead Time: 3 days
+- Product Name: {product_name} ({product_type.upper()})
+- Current Stock: {item_data.get('current_stock', 0)} {unit} / {capacity} {unit} capacity
+- Average Daily Usage: {item_data.get('avg_daily_usage', 0)} {unit}/day (Std Dev: {item_data.get('usage_std_dev', 0)} {unit})
+- 14-Day Trend: {item_data.get('trend', 'stable')}
+- Days Remaining: {item_data.get('days_remaining', 0)} days
+- Reorder Point: {item_data.get('reorder_point', 0)} {unit}
+- Safety Stock: {item_data.get('safety_stock', 0)} {unit}
+- Delivery Lead Time: 3-5 days
 - Date: {date.today().isoformat()}
 """
     resp = None
@@ -57,7 +62,14 @@ METRICS:
                 response_schema=ReorderInsightsResponse,
             )
         )
-        return json.loads(resp.text)
+        data = json.loads(resp.text)
+        return {
+            "urgency_explanation": data.get("urgency_explanation") or f"Stock is at {item_data.get('current_stock', 0)} {unit}.",
+            "demand_insight": data.get("demand_insight") or f"Recent trend is {item_data.get('trend', 'stable')}.",
+            "purchase_recommendation": data.get("purchase_recommendation") or "Review stock level.",
+            "risk_factors": [r for r in (data.get("risk_factors") or []) if r],
+            "action_items": [a for a in (data.get("action_items") or []) if a],
+        }
 
     except Exception as e:
         print("\n=== GEMINI CALL FAILED ===", file=sys.stderr, flush=True)
@@ -66,9 +78,9 @@ METRICS:
         if resp and hasattr(resp, "text"):
             print("Response snippet:", resp.text[:300], file=sys.stderr)
         return {
-            "urgency_explanation": f"Stock is at {fuel_data.get('current_stock', 0)}L relative to reorder point of {fuel_data.get('reorder_point', 0)}L.",
-            "demand_insight": f"Recent 14-day trend is classified as {fuel_data.get('trend', 'unknown')}.",
+            "urgency_explanation": f"Stock is at {item_data.get('current_stock', 0)} {unit} relative to reorder point of {item_data.get('reorder_point', 0)} {unit}.",
+            "demand_insight": f"Recent 14-day trend is classified as {item_data.get('trend', 'unknown')}.",
             "purchase_recommendation": "Manual review required due to temporary insight service disruption.",
             "risk_factors": ["Automated AI analytics temporarily unavailable"],
-            "action_items": ["Verify tank gauge levels manually", "Check pending purchase orders in system"]
+            "action_items": ["Verify inventory levels manually", "Check pending purchase orders in system"]
         }
