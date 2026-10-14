@@ -100,6 +100,7 @@ class Sale(SQLModel, table=True):
     sold_at: datetime = Field(default_factory=datetime.now)
     recorded_by_user: Optional[User] = Relationship()
     fuel: Optional[Fuel] = Relationship()
+    transaction_ref: Optional[str] = Field(default=None, index=True)
 
 class OilProduct(SQLModel, table=True):
     __tablename__ = "oil_product"
@@ -141,6 +142,7 @@ class OilSale(SQLModel, table=True):
     sold_at: datetime = Field(default_factory=datetime.now)
     sold_by: Optional[int] = Field(default=None, foreign_key="user.id")
     attendant_name: Optional[str] = None
+    transaction_ref: Optional[str] = Field(default=None, index=True)
 
 class Expense(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

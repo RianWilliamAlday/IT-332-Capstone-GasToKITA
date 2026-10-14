@@ -252,24 +252,24 @@ def get_ai_inventory_optimization(session: Session = Depends(get_session)):
     enhanced = []
     for metric in base_metrics:
         data = metric.model_dump()
+        unit = metric.unit or "units"
         if metric.urgency in ["critical", "warning", "overstocked"]:
             ai_data = get_ai_reorder_insights(data)
         else:
-            unit = metric.unit
             ai_data = {
                 "urgency_explanation": "Stock levels normal",
-                "demand_insight": f"Usage stable at {metric.avg_daily_usage}{unit}/day",
+                "demand_insight": f"Usage stable at {metric.avg_daily_usage} {unit}/day",
                 "purchase_recommendation": "No action needed",
                 "risk_factors": [],
                 "action_items": ["Monitor weekly"]
             }
         enhanced.append(AIUnifiedInventoryMetrics(
             **data,
-            ai_urgency_explanation=ai_data["urgency_explanation"],
-            ai_demand_insight=ai_data["demand_insight"],
-            ai_purchase_recommendation=ai_data["purchase_recommendation"],
-            ai_risk_factors=ai_data["risk_factors"],
-            ai_action_items=ai_data["action_items"]
+            ai_urgency_explanation=ai_data.get("urgency_explanation") or "Stock levels normal",
+            ai_demand_insight=ai_data.get("demand_insight") or "Usage normal",
+            ai_purchase_recommendation=ai_data.get("purchase_recommendation") or "No action needed",
+            ai_risk_factors=ai_data.get("risk_factors") or [],
+            ai_action_items=ai_data.get("action_items") or []
         ))
     return enhanced
 
@@ -289,7 +289,40 @@ def get_ai_fuel_inventory(session: Session = Depends(get_session)):
                 "risk_factors": [],
                 "action_items": ["Monitor weekly"]
             }
-        enhanced.append(AIInventoryMetrics(**d, ai_urgency_explanation=ai_data["urgency_explanation"], ai_demand_insight=ai_data["demand_insight"], ai_purchase_recommendation=ai_data["purchase_recommendation"], ai_risk_factors=ai_data["risk_factors"], ai_action_items=ai_data["action_items"]))
+        enhanced.append(AIInventoryMetrics(
+            **d,
+            ai_urgency_explanation=ai_data.get("urgency_explanation") or "Stock levels normal",
+            ai_demand_insight=ai_data.get("demand_insight") or "Usage normal",
+            ai_purchase_recommendation=ai_data.get("purchase_recommendation") or "No action needed",
+            ai_risk_factors=ai_data.get("risk_factors") or [],
+            ai_action_items=ai_data.get("action_items") or []
+        ))
+    return enhanced
+
+@router.get("/ai-inventory-optimization/oil", response_model=List[AIUnifiedInventoryMetrics])
+def get_ai_oil_inventory(session: Session = Depends(get_session)):
+    base_metrics = get_oil_inventory_optimization(session)
+    enhanced = []
+    for metric in base_metrics:
+        d = metric.model_dump()
+        if metric.urgency in ["critical", "warning", "overstocked"]:
+            ai_data = get_ai_reorder_insights(d)
+        else:
+            ai_data = {
+                "urgency_explanation": "Stock levels normal",
+                "demand_insight": f"Usage stable at {metric.avg_daily_usage} pcs/day",
+                "purchase_recommendation": "No action needed",
+                "risk_factors": [],
+                "action_items": ["Monitor weekly"]
+            }
+        enhanced.append(AIUnifiedInventoryMetrics(
+            **d,
+            ai_urgency_explanation=ai_data.get("urgency_explanation") or "Stock levels normal",
+            ai_demand_insight=ai_data.get("demand_insight") or "Usage normal",
+            ai_purchase_recommendation=ai_data.get("purchase_recommendation") or "No action needed",
+            ai_risk_factors=ai_data.get("risk_factors") or [],
+            ai_action_items=ai_data.get("action_items") or []
+        ))
     return enhanced
 
 @router.get("/ai-inventory-optimization/oil", response_model=List[AIUnifiedInventoryMetrics])
