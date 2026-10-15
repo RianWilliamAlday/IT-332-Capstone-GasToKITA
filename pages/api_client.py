@@ -148,20 +148,88 @@ def get_unified_history(auth: dict, product_type=None, attendant_name=None, star
     r.raise_for_status()
     return r.json()
 
-def update_oil(auth: dict, oil_id: int, payload: dict):
-    url = f"{BASE_URL}/oils/{oil_id}" 
-    headers = {
-        "Authorization": f"Bearer {auth.get('token', '')}",
-        "Content-Type": "application/json"
-    }
-    response = requests.put(url, json=payload, headers=headers)
-    if response.status_code != 200:
-        raise Exception(f"Server error ({response.status_code}): {response.text}")
-    return response.json()
+def get_cashier_history(auth: dict, cashier_id: int, product_type=None, attendant_name=None, start_date=None, end_date=None, payment_method=None, page=1, page_size=50):
+    """GET /api/employees/{cashier_id}/history - history limited to one cashier account."""
+    params = {"page": page, "page_size": page_size}
+    if product_type and product_type != "all": params["product_type"] = product_type
+    if attendant_name and attendant_name != "all": params["attendant_name"] = attendant_name
+    if payment_method: params["payment_method"] = payment_method
+    if start_date: params["start_date"] = start_date
+    if end_date: params["end_date"] = end_date
+    r = requests.get(f"{BASE_URL}/api/employees/{cashier_id}/history", params=params, headers=_headers(auth), timeout=8)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Failed to fetch cashier history ({r.status_code})")
+    return r.json()
 
-def _headers(auth: dict):
-    token = auth.get("access_token") or auth.get("token")
-    return {"Authorization": f"Bearer {token}"} if token else {}
+def submit_multi_sale(auth: dict, *args, **kwargs):
+    data = {}
+    for a in args:
+        if a is None:
+            continue
+        if isinstance(a, dict):
+            data.update(a)
+        elif isinstance(a, (list, tuple)):
+            first = a[0] if a else {}
+            if isinstance(first, dict) and "pump_id" in first:
+                data["fuel_items"] = list(a)
+            elif isinstance(first, dict) and ("oil_id" in first or "oil_product_id" in first):
+                data["oil_items"] = list(a)
+            elif not a:
+                pass
+            else:
+                raise TypeError(f"submit_multi_sale: can't tell what this list is: {a!r}")
+        elif isinstance(a, str):
+            if a.strip().lower() in ("cash", "gcash"):
+                data["payment_method"] = a.strip().lower()
+            else:
+                data["attendant_name"] = a
+        elif isinstance(a, (int, float)) and not isinstance(a, bool):
+            data["amount_paid"] = float(a)
+        else:
+            raise TypeError(f"submit_multi_sale: unexpected argument {a!r}")
+    data.update(kwargs)
+
+    # Fall back to auth["cart"] if items were not directly provided
+    cart = auth.get("cart", {})
+    if "fuel_items" not in data or not data["fuel_items"]:
+        data["fuel_items"] = cart.get("fuel_items", [])
+    if "oil_items" not in data or not data["oil_items"]:
+        data["oil_items"] = cart.get("oil_items", [])
+
+    # Fall back to attendant in auth if missing
+    if "attendant_name" not in data or not data["attendant_name"]:
+        attendant = auth.get("selected_attendant") or auth.get("name") or auth.get("user") or "Attendant 1"
+        if isinstance(attendant, dict):
+            attendant = attendant.get("name", "Attendant 1")
+        data["attendant_name"] = attendant
+
+    data.setdefault("payment_method", "cash")
+    data.setdefault("amount_paid", 0)
+
+    fixed = []
+    for o in data["oil_items"]:
+        o = dict(o)
+        if "oil_id" not in o and "oil_product_id" in o:
+            o["oil_id"] = o["oil_product_id"]
+        fixed.append(o)
+    data["oil_items"] = fixed
+
+    r = requests.post(f"{BASE_URL}/api/sales/multi", json=data, headers=_headers(auth), timeout=15)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Multi sale failed {r.status_code}")
+    return r.json()
+
+create_multi_sale = submit_multi_sale
+
+def update_oil(auth: dict, oil_id: int, payload: dict):
+    r = requests.put(f"{BASE_URL}/oils/{oil_id}", json=payload, headers=_headers(auth), timeout=10)
+    if r.status_code != 200:
+        raise Exception(f"Server error ({r.status_code}): {r.text}")
+    return r.json()
 
 def get_attendant_rankings(auth, days=30, product_type="all", sort_by="revenue", limit=10, include_breakdown=False):
     r = requests.get(f"{BASE_URL}/analytics/attendants/ranking", params={
@@ -199,16 +267,6 @@ def save_receipt_pdf(auth: dict, sale_id: int, receipt_no: str, product_type="fu
     file_path.write_bytes(pdf_bytes)
     return str(file_path)
 
-def update_fuel_threshold(auth, fuel_id: int, threshold: float):
-    headers = {"Authorization": f"Bearer {auth.get('token')}"}
-    resp = requests.patch(
-        f"{BASE_URL}/api/fuels/{fuel_id}/threshold", 
-        json={"threshold": threshold}, 
-        headers=headers
-    )
-    resp.raise_for_status()
-    return resp.json()
-
 def get_active_attendants(auth: dict):
     """
     GET /api/attendants/active
@@ -245,18 +303,22 @@ def get_attendant_names(auth: dict) -> list[str]:
 
     return DEFAULT_ATTENDANTS
 
-def create_gcash_dialog_checkout(auth: dict, product_type: str = "fuel", attendant_name: str = "", pump_id: int = None, fuel_id: int = None, liters_sold: float = None, oil_product_id: int = None, quantity: int = None):
+def create_gcash_dialog_checkout(auth: dict, product_type: str = "fuel", attendant_name: str = "", pump_id: int = None, fuel_id: int = None, liters_sold: float = None, oil_product_id: int = None, quantity: int = None, fuel_items: list = None, oil_items: list = None):
     """
-    Called when user clicks GCash button INSIDE liters/qty dialog
-    This is the endpoint that creates pending sale + PayMongo checkout_url for QR
+    Called when user clicks GCash button INSIDE liters/qty dialog (or the multi-cart checkout)
     POST /api/payments/gcash/dialog-checkout
+    product_type: "fuel" | "oil" | "multi"
+    For "multi": fuel_items=[{"pump_id", "liters_sold"}], oil_items=[{"oil_product_id", "quantity"}]
     Returns: {sale_id, checkout_id, checkout_url, total_amount, status}
     """
     payload = {
         "product_type": product_type,
         "attendant_name": attendant_name
     }
-    if product_type == "fuel":
+    if product_type == "multi":
+        payload["fuel_items"] = fuel_items or []
+        payload["oil_items"] = oil_items or []
+    elif product_type == "fuel":
         if pump_id is not None: payload["pump_id"] = pump_id
         if fuel_id is not None: payload["fuel_id"] = fuel_id
         if liters_sold is not None: payload["liters_sold"] = float(liters_sold)
