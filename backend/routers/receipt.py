@@ -45,7 +45,6 @@ def build_pdf_bytes(
             c.drawString(5 * mm, y, str(item))
             y -= 5 * mm
     elif sale_type == "fuel":
-        # Use clean fuel name instead of pump name
         clean_fuel = (
             fuel_name.split()[0]
             if fuel_name

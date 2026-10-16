@@ -215,8 +215,8 @@ class UnifiedHistoryResponse(BaseModel):
     total_amount: float
     total_liters: float
     total_oil_pcs: int
-    total_fuel_count: int = 0  # <--- ADD THIS
-    total_oil_count: int = 0   # <--- ADD THIS
+    total_fuel_count: int = 0
+    total_oil_count: int = 0
     page: int
     page_size: int
 
@@ -348,3 +348,19 @@ class MultiSaleResponse(BaseModel):
     oil_sales: List[OilSaleResponse] = []
     checkout_url: Optional[str] = None
     checkout_id: Optional[str] = None
+
+class FuelLitersBreakdown(BaseModel):
+    fuel_id: int
+    fuel_name: str
+    liters_sold: float
+    revenue: float
+    transaction_count: int
+
+class DailyLitersSummaryResponse(BaseModel):
+    date: str
+    period_start: datetime
+    period_end: datetime
+    total_liters_sold: float
+    total_revenue: float
+    total_transactions: int
+    fuel_breakdown: List[FuelLitersBreakdown]

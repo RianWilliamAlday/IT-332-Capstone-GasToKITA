@@ -60,7 +60,6 @@ def create_dialog_checkout(
         pending_sales = []
         pending_oil_sales = []
 
-        # Validate & calculate fuel items
         for fi in (data.fuel_items or []):
             if not fi.liters_sold or fi.liters_sold <= 0:
                 raise HTTPException(400, "Liters must be > 0")
@@ -107,7 +106,6 @@ def create_dialog_checkout(
             session.add(s)
             pending_sales.append(s)
 
-        # Validate & calculate oil items
         for oi in (data.oil_items or []):
             if not oi.oil_product_id or not oi.quantity or oi.quantity <= 0:
                 raise HTTPException(400, "Need valid oil_product_id and quantity > 0")

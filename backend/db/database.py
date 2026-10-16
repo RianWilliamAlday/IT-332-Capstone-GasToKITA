@@ -1,10 +1,10 @@
 import os
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, date
 from enum import Enum
 from dotenv import load_dotenv
-from sqlmodel import SQLModel, Field, create_engine, Session, select, Relationship
+from sqlmodel import SQLModel, Field, create_engine, Session, select, Relationship, JSON
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
@@ -162,6 +162,14 @@ class Attendant(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     deactivated_at: Optional[datetime] = None
+
+class AICache(SQLModel, table=True):
+    __tablename__ = "ai_cache"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cache_key: str = Field(index=True, unique=True)
+    cache_date: date = Field(index=True)
+    response_json: dict = Field(default={}, sa_type=JSON)
+    created_at: datetime = Field(default_factory=datetime.now)
 
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
