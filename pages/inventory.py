@@ -3,7 +3,7 @@ import time, threading, traceback
 from pages.api_client import (
     get_fuels, get_oils, restock_fuel, update_fuel_price,
     dipstick_convert, sync_dipstick, create_oil_product, restock_oil,
-    update_oil, update_fuel_threshold
+    update_oil, update_fuel_threshold, get_daily_liters_summary
 )
 
 DARK_RED = "#8B0000"
@@ -615,12 +615,62 @@ def inventory_page(page: ft.Page, auth: dict):
     
     title_row = ft.Row(controls=[ft.Container(expand=True), dipstick_btn, add_oil_btn, restock_oil_btn], alignment=ft.MainAxisAlignment.END, spacing=10)
 
+    FUEL_CARD_COLORS = {
+        "regular": (GREEN, GREEN, "#DCEFE3"),
+        "premium": (DARK_RED, DARK_RED, "#F3DADA"),
+        "diesel":  ("#F5C243", "#A16207", "#FCF1D0"),
+    }
+    FUEL_CARD_FALLBACKS = [("#1565C0", "#1565C0", "#DCE8F7"), (ORANGE, ORANGE, "#FBE8CF")]
+
+    def make_fuel_sold_card(fuel_name, liters, palette):
+        accent, text_color, tint = palette
+        return ft.Container(
+            content=ft.Row(controls=[
+                ft.Container(width=5, bgcolor=accent),
+                ft.Container(
+                    expand=True, padding=ft.Padding.symmetric(horizontal=14, vertical=12),
+                    content=ft.Row(controls=[
+                        ft.Container(width=34, height=34, border_radius=17, bgcolor=tint, alignment=ft.Alignment.CENTER,
+                                     content=ft.Icon(ft.Icons.LOCAL_GAS_STATION, size=18, color=text_color)),
+                        ft.Column(controls=[
+                            ft.Text(f"{fuel_name} Sold Today", size=11, color="#666666"),
+                            ft.Text(f"{liters:,.2f} L", size=18, weight=ft.FontWeight.BOLD, color=text_color),
+                        ], spacing=2, tight=True),
+                    ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ),
+            ], spacing=0, vertical_alignment=ft.CrossAxisAlignment.STRETCH),
+            bgcolor=WHITE, border_radius=8, height=76, expand=True,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            shadow=ft.BoxShadow(blur_radius=4, color="#00000015", offset=ft.Offset(0, 2))
+        )
+
+    fuel_summary_row = ft.Row(controls=[], spacing=12)
+    fuel_summary_wrap = ft.Container(content=fuel_summary_row, padding=ft.Padding.only(bottom=12))
+
+    def load_daily_summary():
+        def bg():
+            try:
+                data = get_daily_liters_summary(auth)
+                cards = []
+                for i, fb in enumerate(data.get("fuel_breakdown", [])):
+                    name = fb.get("fuel_name", "Fuel")
+                    palette = next((c for k, c in FUEL_CARD_COLORS.items() if k in name.lower()), FUEL_CARD_FALLBACKS[i % len(FUEL_CARD_FALLBACKS)])
+                    cards.append(make_fuel_sold_card(name, float(fb.get("liters_sold", 0) or 0), palette))
+                if cards:
+                    fuel_summary_row.controls = cards
+            except Exception as ex:
+                print("load_daily_summary error:", ex)
+            try: page.update()
+            except: pass
+        page.run_thread(bg)
+
     tab_fuel = ft.Container(padding=ft.Padding.symmetric(vertical=10, horizontal=16), ink=True)
     tab_oil = ft.Container(padding=ft.Padding.symmetric(vertical=10, horizontal=16), ink=True)
     tabs_row = ft.Row([tab_fuel, tab_oil], spacing=12)
 
     def refresh_tabs(update_page=True):
         is_fuel = selected["tab"] == "fuel"
+        fuel_summary_wrap.visible = is_fuel
         dipstick_btn.visible = is_fuel
         add_oil_btn.visible = not is_fuel
         restock_oil_btn.visible = not is_fuel  
@@ -631,6 +681,7 @@ def inventory_page(page: ft.Page, auth: dict):
         tab_oil.border = ft.Border.only(bottom=ft.BorderSide(2, DARK_RED if not is_fuel else ft.Colors.TRANSPARENT))
 
         if is_fuel:
+            load_daily_summary()
             load_fuels()  
         else:
             load_oils()  
@@ -665,6 +716,6 @@ def inventory_page(page: ft.Page, auth: dict):
         bgcolor=DARK_RED, padding=ft.Padding.symmetric(vertical=14, horizontal=24),
     )
 
-    body = ft.Container(expand=True, padding=24, content=ft.Column([title_row, ft.Container(height=12), tabs_row, ft.Container(height=12), content_area], spacing=0, expand=True))
+    body = ft.Container(expand=True, padding=24, content=ft.Column([title_row, ft.Container(height=12), tabs_row, ft.Container(height=12), fuel_summary_wrap, content_area], spacing=0, expand=True))
 
     return ft.Column(spacing=0, expand=True, controls=[header, body, footer])

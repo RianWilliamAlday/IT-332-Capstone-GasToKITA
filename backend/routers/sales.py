@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlmodel import Session, select, and_, func
+from sqlmodel import Session, select, and_, func, text
 from ..db.database import get_session, Sale, Fuel, User, Pump, OilProduct, OilSale, FuelBatch, FuelSaleBatch, Attendant
 from ..models.schemas import (
     SaleCreate, SaleResponse, SaleHistoryItem, SalesHistoryResponse,
@@ -599,7 +599,6 @@ def get_unified_history(
 ):
     raw_items = []
 
-    # 1. FETCH FUEL SALES
     if product_type is None or product_type in [ProductType.FUEL, ProductType.MULTI]:
         fuel_stmt = (
             select(Sale, Fuel.name, Pump.name, User.name)
@@ -627,7 +626,6 @@ def get_unified_history(
                 "transaction_ref": tx_ref
             })
 
-    # 2. FETCH OIL SALES
     if product_type is None or product_type in [ProductType.OIL, ProductType.MULTI]:
         oil_stmt = (
             select(OilSale, OilProduct.brand, OilProduct.name, User.name)
@@ -654,7 +652,6 @@ def get_unified_history(
                 "transaction_ref": tx_ref
             })
 
-    # 3. GROUP BY TRANSACTION REF
     grouped_transactions = {}
     for item in raw_items:
         tx_ref = item["transaction_ref"]
@@ -665,7 +662,6 @@ def get_unified_history(
         else:
             grouped_transactions[f"SINGLE-{item['type']}-{item['sale'].id}"] = [item]
 
-    # 4. UNIFY AND APPLY SAFE FALLBACKS FOR NULL DB VALUES
     unified: List[UnifiedSaleItem] = []
 
     for tx_ref, items in grouped_transactions.items():
@@ -729,7 +725,6 @@ def get_unified_history(
 
             combined_name = " + ".join(item_descriptions)
 
-            # Sum amount_paid and change_given across all sub-items in the multi transaction
             has_any_paid = any(it["sale"].amount_paid is not None for it in items)
             if has_any_paid:
                 grand_paid = sum(float(it["sale"].amount_paid or 0.0) for it in items)
@@ -755,9 +750,6 @@ def get_unified_history(
                 recorded_by=items[0]["recorded_by"]
             ))
 
-    # Safe sort in case sold_at is missing on an old row
-    # In backend/routers/sales.py -> get_unified_history()
-
     unified.sort(key=lambda x: x.sold_at or datetime.min, reverse=True)
 
     total_count = len(unified)
@@ -765,7 +757,6 @@ def get_unified_history(
     total_liters = sum(x.quantity for x in unified if x.product_type == ProductType.FUEL)
     total_oil_pcs = sum(x.quantity for x in unified if x.product_type == ProductType.OIL)
 
-    # Count fuel & oil items across ALL unified transactions (all pages)
     total_fuel_count = sum(1 if x.product_type == ProductType.FUEL else x.product_name.count("L)") for x in unified)
     total_oil_count = sum(1 if x.product_type == ProductType.OIL else x.product_name.count("pcs)") for x in unified)
 
@@ -858,3 +849,70 @@ def export_unified_csv(
     output.seek(0)
     filename = f"unified_sales_{start_date or 'all'}_to_{end_date or 'all'}.csv"
     return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+@router.get("/daily-liters-summary")
+def get_daily_liters_summary(
+    fuel_id: Optional[int] = Query(None, description="Filter by specific fuel ID"),
+    session: Session = Depends(get_session)
+):
+    """
+    Calculates total liters sold starting from today at 00:00:00 up to current time.
+    Resets automatically at midnight (00:00:00 tomorrow).
+    Includes breakdown per fuel type.
+    """
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    query = select(Sale).where(
+        and_(
+            Sale.sold_at >= today_start,
+            Sale.sold_at <= today_end,
+            Sale.payment_status == "paid"
+        )
+    )
+
+    if fuel_id:
+        query = query.where(Sale.fuel_id == fuel_id)
+
+    sales_today = session.exec(query).all()
+
+    total_liters = sum(s.liters_sold for s in sales_today)
+    total_revenue = sum(s.total_amount for s in sales_today)
+    total_transactions = len(sales_today)
+
+    fuel_breakdown_sql = text("""
+        SELECT f.id, f.name, COALESCE(SUM(s.liters_sold), 0) as liters, COALESCE(SUM(s.total_amount), 0) as revenue, COUNT(s.id) as txns
+        FROM fuel f
+        LEFT JOIN sale s ON s.fuel_id = f.id 
+            AND s.sold_at >= :today_start 
+            AND s.sold_at <= :today_end 
+            AND s.payment_status = 'paid'
+        GROUP BY f.id, f.name
+        ORDER BY f.id ASC
+    """)
+    
+    breakdown_rows = session.execute(
+        fuel_breakdown_sql, 
+        {"today_start": today_start, "today_end": today_end}
+    ).fetchall()
+
+    breakdown = [
+        {
+            "fuel_id": r[0],
+            "fuel_name": r[1],
+            "liters_sold": round(float(r[2]), 2),
+            "revenue": round(float(r[3]), 2),
+            "transaction_count": int(r[4])
+        }
+        for r in breakdown_rows
+    ]
+
+    return {
+        "date": today_start.strftime("%Y-%m-%d"),
+        "period_start": today_start.isoformat(),
+        "period_end": today_end.isoformat(),
+        "total_liters_sold": round(total_liters, 2),
+        "total_revenue": round(total_revenue, 2),
+        "total_transactions": total_transactions,
+        "fuel_breakdown": breakdown
+    }

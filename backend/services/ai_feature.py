@@ -76,11 +76,12 @@ METRICS:
         traceback.print_exc()
         
         if resp and hasattr(resp, "text"):
-            print("Response snippet:", resp.text[:300], file=sys.stderr)
+            print("Response snippet:", (resp.text or "")[:300], file=sys.stderr)
         return {
             "urgency_explanation": f"Stock is at {item_data.get('current_stock', 0)} {unit} relative to reorder point of {item_data.get('reorder_point', 0)} {unit}.",
             "demand_insight": f"Recent 14-day trend is classified as {item_data.get('trend', 'unknown')}.",
             "purchase_recommendation": "Manual review required due to temporary insight service disruption.",
             "risk_factors": ["Automated AI analytics temporarily unavailable"],
-            "action_items": ["Verify inventory levels manually", "Check pending purchase orders in system"]
+            "action_items": ["Verify inventory levels manually", "Check pending purchase orders in system"],
+            "is_fallback": True
         }

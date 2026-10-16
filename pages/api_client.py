@@ -123,13 +123,19 @@ def get_oil_profit_margins(auth: dict, days: int = 30):
     r.raise_for_status()
     return r.json()
 
-def get_unified_profit_margins(auth: dict, days: int = 30):
-    r = requests.get(f"{BASE_URL}/analytics/profit-margins/unified", params={"days": days}, headers=_headers(auth), timeout=10)
+def get_net_profit_summary(auth: dict, days: int = 30):
+    r = requests.get(f"{BASE_URL}/analytics/net-profit/summary", params={"days": days}, headers=_headers(auth), timeout=10)
     r.raise_for_status()
     return r.json()
 
 def get_revenue_summary(auth: dict, days: int = 30):
     r = requests.get(f"{BASE_URL}/analytics/revenue/summary", params={"days": days}, headers=_headers(auth), timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def get_daily_liters_summary(auth: dict, fuel_id: Optional[int] = None):
+    params = {"fuel_id": fuel_id} if fuel_id else {}
+    r = requests.get(f"{BASE_URL}/api/sales/daily-liters-summary", params=params, headers=_headers(auth), timeout=8)
     r.raise_for_status()
     return r.json()
 
@@ -191,14 +197,12 @@ def submit_multi_sale(auth: dict, *args, **kwargs):
             raise TypeError(f"submit_multi_sale: unexpected argument {a!r}")
     data.update(kwargs)
 
-    # Fall back to auth["cart"] if items were not directly provided
     cart = auth.get("cart", {})
     if "fuel_items" not in data or not data["fuel_items"]:
         data["fuel_items"] = cart.get("fuel_items", [])
     if "oil_items" not in data or not data["oil_items"]:
         data["oil_items"] = cart.get("oil_items", [])
 
-    # Fall back to attendant in auth if missing
     if "attendant_name" not in data or not data["attendant_name"]:
         attendant = auth.get("selected_attendant") or auth.get("name") or auth.get("user") or "Attendant 1"
         if isinstance(attendant, dict):

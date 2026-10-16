@@ -321,7 +321,6 @@ def dashboard_page(page: ft.Page, auth: dict):
     stats_row = ft.Row([
         animated_fuel_stat_card(page, auth),
         animated_daily_sales_card(page, auth),
-        stat_card(icon=ft.Icons.ATTACH_MONEY, title="Daily Net Profit", value="₱ 5,000", period_label="daily"),
     ], spacing=16)
 
     quick_actions_list = ft.Column([
@@ -337,7 +336,7 @@ def dashboard_page(page: ft.Page, auth: dict):
         ft.Text("Quick Actions", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD),
         ft.Container(height=4),
         quick_actions_list
-    ], spacing=0, tight=True)
+    ], spacing=0, expand=True)
 
     quick_actions = ft.Container(
         content=quick_actions_col, 
@@ -345,33 +344,37 @@ def dashboard_page(page: ft.Page, auth: dict):
         border_radius=10, 
         padding=18, 
         expand=True,
-        height=380  # Fixed height enables internal scrolling
     )
 
-    low_stock_col = ft.Column([
-        ft.Text("Low Stock Alert", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD),
-        ft.Container(height=8),
+    low_stock_title = ft.Text("Low Stock Alert", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD)
+    low_stock_header = ft.Row([low_stock_title], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+    low_stock_list = ft.Column([
         ft.Container(
             content=ft.Row([ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=DARK_GREEN, size=16), ft.Text("Checking stock...", color=TEXT_DARK, size=12, italic=True)], spacing=8),
             bgcolor=LIGHT_CARD, border_radius=6, padding=ft.Padding.symmetric(vertical=10, horizontal=14),
         ),
-    ], spacing=5, tight=True)
+    ], spacing=5, scroll=ft.ScrollMode.AUTO, expand=True)
+    low_stock_footer = ft.Container(
+        visible=False, padding=ft.Padding.only(top=8),
+        content=ft.Container(content=ft.Text("View Inventory →", size=11, color=DARK_RED, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER), border=ft.Border.all(1, DARK_RED), border_radius=6, padding=8, ink=True, on_click=go_inventory),
+    )
+    low_stock_col = ft.Column([low_stock_header, ft.Container(height=8), low_stock_list, low_stock_footer], spacing=0, expand=True)
 
     def render_low_stock(data: dict):
         items = data.get("items", [])
         total = data.get("total_count", 0)
         if total == 0:
-            low_stock_col.controls = [
-                ft.Text("Low Stock Alert", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD),
-                ft.Container(height=8),
+            low_stock_header.controls = [low_stock_title]
+            low_stock_list.controls = [
                 ft.Container(
                     content=ft.Row([ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=DARK_GREEN, size=16), ft.Text("There is no low stock at the moment.", color=DARK_GREEN, size=12, italic=True)], spacing=8),
                     bgcolor=GREEN_ALERT, border_radius=6, padding=ft.Padding.symmetric(vertical=10, horizontal=14),
                 ),
             ]
+            low_stock_footer.visible = False
         else:
             alert_widgets = []
-            for it in items[:5]:
+            for it in items:
                 name = it.get("product_name","")
                 ptype = it.get("product_type","")
                 stock = it.get("current_stock",0)
@@ -394,16 +397,10 @@ def dashboard_page(page: ft.Page, auth: dict):
                         ], spacing=8)
                     )
                 )
-            if total > 5:
-                alert_widgets.append(ft.Text(f"+{total-5} more...", size=10, color=DARK_RED, italic=True))
-            low_stock_col.controls = [
-                ft.Row([ft.Text("Low Stock Alert", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD), ft.Container(content=ft.Text(f"{total}", size=11, color=WHITE, weight=ft.FontWeight.BOLD), bgcolor=DARK_RED, border_radius=10, padding=ft.Padding.symmetric(horizontal=8, vertical=2))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                ft.Container(height=8),
-                *alert_widgets,
-                ft.Container(height=6),
-                ft.Container(content=ft.Text("View Inventory →", size=11, color=DARK_RED, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER), border=ft.Border.all(1, DARK_RED), border_radius=6, padding=8, ink=True, on_click=go_inventory)
-            ]
-            
+            low_stock_header.controls = [low_stock_title, ft.Container(content=ft.Text(f"{total}", size=11, color=WHITE, weight=ft.FontWeight.BOLD), bgcolor=DARK_RED, border_radius=10, padding=ft.Padding.symmetric(horizontal=8, vertical=2))]
+            low_stock_list.controls = alert_widgets
+            low_stock_footer.visible = True
+
         try: page.update()
         except: pass
 
@@ -415,7 +412,7 @@ def dashboard_page(page: ft.Page, auth: dict):
 
     low_stock = ft.Container(content=low_stock_col, bgcolor=LIGHT_CARD, border_radius=10, padding=18, expand=True)
 
-    middle_row = ft.Row([quick_actions, low_stock], spacing=16, vertical_alignment=ft.CrossAxisAlignment.START)
+    middle_row = ft.Row([quick_actions, low_stock], spacing=16, vertical_alignment=ft.CrossAxisAlignment.STRETCH, expand=True)
 
     body = ft.Container(
         bgcolor=BODY_BG, 

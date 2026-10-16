@@ -132,7 +132,6 @@ def get_cashier_history(
 
     raw_items = []
 
-    # 1. FETCH FUEL SALES FOR THIS CASHIER
     if product_type in (None, "all", "fuel", "multi"):
         fuel_stmt = (
             select(Sale, Fuel.name, Pump.name)
@@ -159,7 +158,6 @@ def get_cashier_history(
                 "transaction_ref": tx_ref
             })
 
-    # 2. FETCH OIL SALES FOR THIS CASHIER
     if product_type in (None, "all", "oil", "multi"):
         oil_stmt = (
             select(OilSale, OilProduct.brand, OilProduct.name)
@@ -186,7 +184,6 @@ def get_cashier_history(
                 "transaction_ref": tx_ref
             })
 
-    # 3. GROUP BY TRANSACTION REF
     grouped_transactions = {}
     for item in raw_items:
         tx_ref = item["transaction_ref"]
@@ -197,7 +194,6 @@ def get_cashier_history(
         else:
             grouped_transactions[f"SINGLE-{item['type']}-{item['sale'].id}"] = [item]
 
-    # 4. UNIFY AND AGGREGATE
     unified = []
 
     for tx_ref, items in grouped_transactions.items():
@@ -285,14 +281,11 @@ def get_cashier_history(
                 "recorded_by": user.name
             })
 
-    # Optional product_type filtering post-unification
     if product_type and product_type.lower() in ("fuel", "oil", "multi"):
         unified = [x for x in unified if x["product_type"] == product_type.lower()]
 
-    # Sort descending by date
     unified.sort(key=lambda x: x["sold_at"], reverse=True)
 
-    # ACCURATE ITEM COUNTING ACROSS ALL TRANSACTIONS (INCLUDING MULTI-SALES)
     total_fuel_count = sum(1 if x["product_type"] == "fuel" else x["product_name"].count("L)") for x in unified)
     total_oil_count  = sum(1 if x["product_type"] == "oil" else x["product_name"].count("pcs)") for x in unified)
     
@@ -324,9 +317,9 @@ def get_cashier_history(
         "page": page,
         "page_size": page_size,
         "total_count": len(unified),
-        "total_amount": round(total_sum, 2),     # <-- Added root key
-        "total_fuel_count": total_fuel_count,    # <-- Added root key
-        "total_oil_count": total_oil_count       # <-- Added root key
+        "total_amount": round(total_sum, 2),
+        "total_fuel_count": total_fuel_count,
+        "total_oil_count": total_oil_count
     }
 
 @router.get("/{user_id}/summary")
