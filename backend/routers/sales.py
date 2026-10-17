@@ -725,13 +725,16 @@ def get_unified_history(
 
             combined_name = " + ".join(item_descriptions)
 
-            has_any_paid = any(it["sale"].amount_paid is not None for it in items)
-            if has_any_paid:
-                grand_paid = sum(float(it["sale"].amount_paid or 0.0) for it in items)
-            else:
-                grand_paid = grand_total
+            is_gcash = (first_sale.payment_method or "").lower() == "gcash"
 
-            grand_change = sum(float(it["sale"].change_given or 0.0) for it in items)
+            if is_gcash:
+                grand_paid = grand_total
+                grand_change = 0.0
+            else:
+    # For cash, check if first_sale stored the full transaction payment
+                stored_paid = float(first_sale.amount_paid or 0.0)
+                grand_paid = stored_paid if stored_paid >= grand_total else grand_total
+                grand_change = float(first_sale.change_given or 0.0)
 
             unified.append(UnifiedSaleItem(
                 id=first_sale.id,
