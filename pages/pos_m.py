@@ -1,192 +1,190 @@
 import flet as ft
+from pages.api_client import create_fuel_sale, create_oil_sale
 
+MOBILE_RED = "#8B0000"
+GREEN_COLOR = "#118C4F"
+NAVY_COLOR = "#0F3057"
 
-def main(page: ft.Page):
-    page.title = "U-FUEL"
-    page.bgcolor = "#8B0000"
-    page.padding = ft.Padding.all(0)
+def build_pos_page_mobile(page: ft.Page, auth: dict, transaction: dict = None):
+    page.bgcolor = MOBILE_RED
+    page.padding = 0
     page.window.width = 390
     page.window.height = 844
     page.window.resizable = False
 
+    total_due = float(transaction.get("total", 0)) if transaction else 0
+    label = transaction.get("label", "") if transaction else ""
+    details = transaction.get("details", "") if transaction else ""
+    tx_type = transaction.get("type", "fuel") if transaction else "fuel"
+
+    paid = {"value": 0.0}
+
+    def show_snack(message, bgcolor=None):
+        page.snack_bar = ft.SnackBar(content=ft.Text(message), bgcolor=bgcolor)
+        page.snack_bar.open = True
+        page.update()
+
+    amount_field = ft.TextField(
+        value="",
+        hint_text="0.00",
+        width=180,
+        height=48,
+        text_align=ft.TextAlign.RIGHT,
+        keyboard_type=ft.KeyboardType.NUMBER,
+        read_only=False,
+        autofocus=True,
+    )
+
+    def on_amount_change(e):
+        v = e.control.value or ""
+        s = v.replace("₱", "").replace(",", "").strip()
+        try:
+            paid["value"] = float(s) if s not in ("", ".") else 0.0
+        except ValueError:
+            pass
+
+    def on_amount_focus(e):
+        if amount_field.value in ("0.00", "0", "0.0"):
+            amount_field.value = ""
+            page.update()
+
+    def on_amount_blur(e):
+        if not amount_field.value and paid["value"] > 0:
+            amount_field.value = f"{paid['value']:.2f}"
+            page.update()
+
+    amount_field.on_change = on_amount_change
+    amount_field.on_focus = on_amount_focus
+    amount_field.on_blur = on_amount_blur
+
+    def refresh():
+        amount_field.value = f"{paid['value']:.2f}" if paid["value"] > 0 else ""
+        page.update()
+
+    def add_value(v):
+        paid["value"] += float(v)
+        refresh()
+
+    def on_exact(e):
+        paid["value"] = total_due
+        refresh()
+
+    def on_back(e):
+        if tx_type == "fuel":
+            from pages.select_gas_m import build_gas_page_mobile
+            page.controls.clear()
+            page.add(build_gas_page_mobile(page, auth))
+        else:
+            from pages.select_oil_m import build_oil_page_mobile
+            page.controls.clear()
+            page.add(build_oil_page_mobile(page, auth))
+        page.update()
+
+    def create_btn(val):
+        return ft.Container(
+            content=ft.Text(val, size=16, weight=ft.FontWeight.BOLD, color="white"),
+            bgcolor=MOBILE_RED, border_radius=10, alignment=ft.Alignment(0, 0),
+            padding=ft.Padding.symmetric(vertical=12), expand=True, ink=True,
+            on_click=lambda e: add_value(val)
+        )
+
+    def on_submit(e):
+        if paid["value"] < total_due:
+            show_snack(f"Insufficient amount. Short by ₱{total_due - paid['value']:.2f}")
+            return
+
+        change = paid["value"] - total_due
+        attendant = auth.get("selected_attendant") or auth.get("user", {}).get("name") or "Attendant 1"
+
+        try:
+            if tx_type == "fuel":
+                pump_id = transaction.get("pump_id", 1)
+                liters = transaction.get("liters", 0)
+                result = create_fuel_sale(auth, pump_id, liters, attendant, "cash", paid["value"])
+            else:
+                oil_id = transaction.get("oil_id")
+                qty = transaction.get("quantity", 1)
+                result = create_oil_sale(auth, oil_id, qty, attendant, "cash", paid["value"])
+
+            auth.pop("fuels_data", None)
+            auth.pop("oils_data", None)
+
+            from pages.change_m import build_change_page_mobile
+            page.controls.clear()
+            page.add(build_change_page_mobile(page, auth, transaction, paid["value"], change, sale=result, tx_type=tx_type))
+            page.update()
+
+        except Exception as ex:
+            show_snack(f"Failed: {ex}")
+
     header = ft.Container(
         content=ft.Row(
             controls=[
-                ft.Column(
-                    controls=[
-                        ft.Text("Cashier", size=16, weight=ft.FontWeight.BOLD, color="white"),
-                    ],
-                    spacing=0,
-                    tight=True,
-                ),
-                ft.Row(
-                    controls=[
-                        ft.Text("U-FUEL", size=16, weight=ft.FontWeight.BOLD, color="white"),
-                        ft.Container(
-                            content=ft.Image(
-                                src="u-fuel_logo.jpg",
-                                width=55,
-                                height=55,
-                                fit=ft.BoxFit.CONTAIN,
-                            ),
-                            bgcolor="#FFD700",
-                            border_radius=ft.BorderRadius(top_left=8, top_right=8, bottom_left=8, bottom_right=8),
-                            padding=ft.Padding.all(4),
-                            width=40,
-                            height=40,
-                            alignment=ft.Alignment.CENTER,
-                        ),
-                    ],
-                    spacing=8,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
+                ft.Column(controls=[ft.Text("Pump", size=16, weight=ft.FontWeight.BOLD, color="white"), ft.Text("Attendant", size=16, weight=ft.FontWeight.BOLD, color="white")], spacing=0),
+                ft.Row(controls=[ft.Text("U-FUEL", size=16, weight=ft.FontWeight.BOLD, color="white"), ft.Container(content=ft.Image(src="u-fuel_logo.jpg", width=40, height=40, fit=ft.BoxFit.CONTAIN), bgcolor="white", border_radius=8, padding=4, width=40, height=40)], spacing=8),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
         padding=ft.Padding.symmetric(horizontal=20, vertical=14),
     )
 
-    amount_display = ft.Container(
-        content=ft.Text(
-            "₱ 0.00",
-            size=20,
-            weight=ft.FontWeight.BOLD,
-            color="white",
-            text_align=ft.TextAlign.CENTER,
-        ),
-        bgcolor="#8B0000",
-        border_radius=ft.BorderRadius(top_left=10, top_right=10, bottom_left=10, bottom_right=10),
-        padding=ft.Padding.symmetric(horizontal=20, vertical=14),
-        alignment=ft.Alignment.CENTER,
-        width=float("inf"),
-    )
-
-    def amount_btn(label: str):
-        return ft.Button(
-            content=label,
-            bgcolor="#8B0000",
-            color="white",
-            expand=True,
-            height=48,
-            style=ft.ButtonStyle(
-                shape=ft.RoundedRectangleBorder(radius=10),
-                text_style=ft.TextStyle(size=15, weight=ft.FontWeight.BOLD),
+    keypad = ft.Column(
+        controls=[
+            ft.Row(controls=[create_btn("50"), create_btn("100"), create_btn("200")], spacing=10),
+            ft.Row(controls=[create_btn("300"), create_btn("400"), create_btn("500")], spacing=10),
+            ft.Row(controls=[create_btn("600"), create_btn("700"), create_btn("1000")], spacing=10),
+            ft.Container(
+                content=ft.Text("EXACT AMOUNT", size=14, weight=ft.FontWeight.BOLD, color="white"),
+                bgcolor=NAVY_COLOR, border_radius=10, alignment=ft.Alignment(0, 0),
+                padding=ft.Padding.symmetric(vertical=12), ink=True, on_click=on_exact
             ),
-        )
-
-    denominations = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
-
-    denom_rows = []
-    groups = [denominations[i:i+3] for i in range(0, len(denominations), 3)]
-    for group in groups:
-        row_controls = []
-        for val in group:
-            row_controls.append(amount_btn(str(val)))
-        denom_rows.append(
-            ft.Row(controls=row_controls, spacing=10, expand=False)
-        )
-
-    exact_button = ft.Button(
-        content="EXACT AMOUNT",
-        bgcolor="#8B0000",
-        color="white",
-        width=float("inf"),
-        height=50,
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=10),
-            text_style=ft.TextStyle(size=14, weight=ft.FontWeight.BOLD, letter_spacing=1.2),
-        ),
+        ],
+        spacing=10
     )
 
-    submit_button = ft.Button(
-        content="SUBMIT",
-        bgcolor="#006400",
-        color="white",
-        width=float("inf"),
-        height=50,
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=10),
-            text_style=ft.TextStyle(size=14, weight=ft.FontWeight.BOLD, letter_spacing=1.2),
-        ),
-    )
-
-    outer_container = ft.Container(
+    outer = ft.Container(
         content=ft.Column(
             controls=[
-                amount_display,
-                ft.Container(height=16),
-                *denom_rows,
+                ft.Text(f"{label} ({details})", size=14, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
+                ft.Text(f"Due: ₱{total_due:.2f}", size=18, weight=ft.FontWeight.BOLD, color=MOBILE_RED),
                 ft.Container(height=10),
-                exact_button,
+                ft.Row(controls=[ft.Text("Paid: ₱", size=16, weight=ft.FontWeight.BOLD), amount_field], alignment=ft.MainAxisAlignment.CENTER),
                 ft.Container(height=10),
-                submit_button
+                keypad,
+                ft.Container(height=10),
+                ft.Container(
+                    content=ft.Text("SUBMIT", size=16, weight=ft.FontWeight.BOLD, color="white"),
+                    bgcolor=GREEN_COLOR, border_radius=10, alignment=ft.Alignment(0, 0),
+                    padding=ft.Padding.symmetric(vertical=14), ink=True, on_click=on_submit
+                ),
             ],
-            spacing=6,
-            tight=True,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=8,
         ),
-        border=ft.Border.all(1.5, "#8B0000"),
-        border_radius=ft.BorderRadius(top_left=12, top_right=12, bottom_left=12, bottom_right=12),
+        border=ft.Border.all(1.5, MOBILE_RED),
+        border_radius=12,
         padding=ft.Padding.all(16),
         width=float("inf"),
-    )
-
-    back_button = ft.Container(
-        content=ft.Icon(ft.Icons.ARROW_BACK, color="#8B0000", size=24),
-        padding=ft.Padding.only(left=4, top=4, bottom=8),
     )
 
     content_card = ft.Container(
         content=ft.Column(
             controls=[
-                ft.Row(
-                    controls=[
-                    ft.IconButton(
-                    icon=ft.Icons.ARROW_BACK,
-                    icon_color="#8B0000",
-                    icon_size=24,
-                    padding=ft.Padding.all(0),
-                    ),
-                ],
-                    alignment=ft.MainAxisAlignment.START,
-                ),
-                ft.Container(height=16),
-                outer_container,
+                ft.Row(controls=[ft.IconButton(icon=ft.Icons.ARROW_BACK, icon_color=MOBILE_RED, on_click=on_back)], alignment=ft.MainAxisAlignment.START),
+                outer,
             ],
-            spacing=10,
-            scroll=ft.ScrollMode.ADAPTIVE,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            scroll=ft.ScrollMode.ADAPTIVE,
         ),
         bgcolor="white",
         border_radius=ft.BorderRadius(top_left=28, top_right=28, bottom_left=0, bottom_right=0),
-        padding=ft.Padding.symmetric(horizontal=24, vertical=20),
+        expand=True,
+        padding=ft.Padding.all(20)
+    )
+
+    footer = ft.Container(content=ft.Text("GAStoKITA", size=13, color="white", text_align=ft.TextAlign.CENTER), bgcolor=MOBILE_RED, padding=ft.Padding.symmetric(vertical=14), alignment=ft.Alignment.CENTER)
+
+    return ft.SafeArea(
+        content=ft.Column(controls=[header, ft.Container(height=10), content_card, footer], expand=True, spacing=0),
         expand=True,
     )
-
-    footer = ft.Container(
-        content=ft.Text(
-            "GAStoKITA",
-            size=13,
-            color="white",
-            text_align=ft.TextAlign.CENTER,
-        ),
-        bgcolor="#8B0000",
-        padding=ft.Padding.symmetric(vertical=14),
-        alignment=ft.Alignment.CENTER,
-    )
-
-    page.add(
-        ft.Column(
-            controls=[
-                header,
-                ft.Container(height=10),
-                content_card,
-                footer,
-            ],
-            expand=True,
-            spacing=0,
-        )
-    )
-
-
-ft.run(main)
