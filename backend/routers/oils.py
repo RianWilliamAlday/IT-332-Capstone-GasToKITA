@@ -1,10 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlmodel import Session, select
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
+from supabase import create_client, Client
 from ..db.database import get_session, OilProduct, OilRestockLog
 from ..services.auth import get_current_user, User
+from dotenv import load_dotenv
+from pathlib import Path
+import os, uuid
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
+
+supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 router = APIRouter(prefix="/oils", tags=["Oils"])
 
@@ -16,6 +28,7 @@ class OilCreate(BaseModel):
     price: float
     cost: float = 0
     low_stock_threshold: int = 5
+    image_url: Optional[str] = None
 
 class OilRestockRequest(BaseModel):
     quantity_added: int
@@ -106,4 +119,46 @@ def restock_oil(oil_id: int, data: OilRestockRequest, session: Session = Depends
         "new_stock": oil.stock,
         "weighted_avg_cost": oil.cost,
         "needs_restock": oil.stock <= oil.low_stock_threshold
+    }
+
+@router.post("/{oil_id}/upload-image")
+async def upload_oil_image(
+    oil_id: int, 
+    file: UploadFile = File(...), 
+    session: Session = Depends(get_session)
+):
+    oil = session.get(OilProduct, oil_id)
+    if not oil:
+        raise HTTPException(404, "Oil product not found")
+        
+    if not supabase_client:
+        raise HTTPException(500, "Supabase storage client not configured")
+
+    allowed_types = ["image/jpeg", "image/png", "image/webp"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(400, "Only JPEG, PNG, and WebP images are allowed")
+
+    ext = file.filename.split(".")[-1]
+    file_path = f"products/oil_{oil_id}_{uuid.uuid4().hex[:8]}.{ext}"
+
+    file_bytes = await file.read()
+
+    res = supabase_client.storage.from_("GAStoKITA").upload(
+        path=file_path,
+        file=file_bytes,
+        file_options={"content-type": file.content_type}
+    )
+
+    public_url = f"{SUPABASE_URL}/storage/v1/object/public/GAStoKITA/{file_path}"
+
+    oil.image_url = public_url
+    oil.updated_at = datetime.now()
+    session.add(oil)
+    session.commit()
+    session.refresh(oil)
+
+    return {
+        "message": "Image uploaded successfully",
+        "oil_id": oil.id,
+        "image_url": public_url
     }

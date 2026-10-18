@@ -112,6 +112,7 @@ class OilProduct(SQLModel, table=True):
     price: float
     cost: float = Field(default=0)
     low_stock_threshold: int = Field(default=5)
+    image_url: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 

@@ -519,3 +519,12 @@ def export_history_csv(auth: dict, product_type=None, start_date=None, end_date=
         return r.text
     except Exception as ex:
         raise Exception(f"Export failed: {ex}")
+
+def upload_oil_image(auth: dict, oil_id: int, file_bytes: bytes, file_name: str) -> dict:
+    """Uploads an image for a specific oil product to Supabase Storage via backend."""
+    headers = {"Authorization": f"Bearer {auth.get('token')}"}
+    files = {"file": (file_name, file_bytes, "image/jpeg")}
+    res = requests.post(f"{BASE_URL}/oils/{oil_id}/upload-image", headers=headers, files=files)
+    if res.status_code != 200:
+        raise Exception(f"Failed to upload image: {res.text}")
+    return res.json()
