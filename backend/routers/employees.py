@@ -119,8 +119,9 @@ def get_cashier_history(
     user_id: int,
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    product_type: Optional[str] = Query(None, description="fuel, oil, all"),
+    product_type: Optional[str] = Query(None, description="fuel, oil, multi, all"),
     attendant_name: Optional[str] = Query(None, description="Filter by attendant on duty"),
+    payment_method: Optional[str] = Query(None, description="Filter by payment method (cash, gcash)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     session: Session = Depends(get_session)
@@ -129,77 +130,199 @@ def get_cashier_history(
     if not user:
         raise HTTPException(404, f"Cashier account {user_id} not found")
 
-    fuel_filters = [Sale.recorded_by == user_id]
-    oil_filters = [OilSale.sold_by == user_id]
+    raw_items = []
 
-    if start_date:
-        fuel_filters.append(Sale.sold_at >= datetime.combine(start_date, time.min))
-        oil_filters.append(OilSale.sold_at >= datetime.combine(start_date, time.min))
-    if end_date:
-        fuel_filters.append(Sale.sold_at <= datetime.combine(end_date, time.max))
-        oil_filters.append(OilSale.sold_at <= datetime.combine(end_date, time.max))
-    if attendant_name:
-        fuel_filters.append(Sale.attendant_name == attendant_name)
-        oil_filters.append(OilSale.attendant_name == attendant_name)
+    if product_type in (None, "all", "fuel", "multi"):
+        fuel_stmt = (
+            select(Sale, Fuel.name, Pump.name)
+            .outerjoin(Fuel, Sale.fuel_id == Fuel.id)
+            .outerjoin(Pump, Sale.pump_id == Pump.id)
+            .where(Sale.recorded_by == user_id)
+        )
+        if start_date:
+            fuel_stmt = fuel_stmt.where(Sale.sold_at >= datetime.combine(start_date, time.min))
+        if end_date:
+            fuel_stmt = fuel_stmt.where(Sale.sold_at <= datetime.combine(end_date, time.max))
+        if attendant_name:
+            fuel_stmt = fuel_stmt.where(func.lower(Sale.attendant_name) == attendant_name.lower())
+        if payment_method:
+            fuel_stmt = fuel_stmt.where(func.lower(Sale.payment_method) == payment_method.lower())
 
-    fuel_sales = []
-    oil_sales = []
-    if product_type in (None, "all", "fuel"):
-        fuel_sales = session.exec(select(Sale).where(*fuel_filters).order_by(Sale.sold_at.desc())).all()
-    if product_type in (None, "all", "oil"):
-        oil_sales = session.exec(select(OilSale).where(*oil_filters).order_by(OilSale.sold_at.desc())).all()
+        for s, fuel_name, pump_name in session.exec(fuel_stmt).all():
+            tx_ref = getattr(s, "transaction_ref", None) or s.receipt_no
+            raw_items.append({
+                "type": "fuel",
+                "sale": s,
+                "product_name": fuel_name or "Fuel",
+                "pump_name": pump_name or "-",
+                "transaction_ref": tx_ref
+            })
+
+    if product_type in (None, "all", "oil", "multi"):
+        oil_stmt = (
+            select(OilSale, OilProduct.brand, OilProduct.name)
+            .outerjoin(OilProduct, OilSale.oil_product_id == OilProduct.id)
+            .where(OilSale.sold_by == user_id)
+        )
+        if start_date:
+            oil_stmt = oil_stmt.where(OilSale.sold_at >= datetime.combine(start_date, time.min))
+        if end_date:
+            oil_stmt = oil_stmt.where(OilSale.sold_at <= datetime.combine(end_date, time.max))
+        if attendant_name:
+            oil_stmt = oil_stmt.where(func.lower(OilSale.attendant_name) == attendant_name.lower())
+        if payment_method:
+            oil_stmt = oil_stmt.where(func.lower(OilSale.payment_method) == payment_method.lower())
+
+        for s, oil_brand, oil_name in session.exec(oil_stmt).all():
+            p_name = f"{oil_brand or ''} {oil_name or ''}".strip() or "Oil"
+            tx_ref = getattr(s, "transaction_ref", None) or s.receipt_no
+            raw_items.append({
+                "type": "oil",
+                "sale": s,
+                "product_name": p_name,
+                "pump_name": "-",
+                "transaction_ref": tx_ref
+            })
+
+    grouped_transactions = {}
+    for item in raw_items:
+        tx_ref = item["transaction_ref"]
+        if tx_ref and str(tx_ref).startswith("M-"):
+            if tx_ref not in grouped_transactions:
+                grouped_transactions[tx_ref] = []
+            grouped_transactions[tx_ref].append(item)
+        else:
+            grouped_transactions[f"SINGLE-{item['type']}-{item['sale'].id}"] = [item]
 
     unified = []
-    for s in fuel_sales:
-        fuel = session.get(Fuel, s.fuel_id)
-        pump = session.get(Pump, s.pump_id)
-        unified.append({
-            "id": s.id, "product_type": "fuel",
-            "product_name": fuel.name if fuel else "Fuel",
-            "attendant_name": s.attendant_name,
-            "quantity": s.liters_sold, "unit": "L",
-            "price": s.price_per_liter, "total": s.total_amount,
-            "payment": s.payment_method,
-            "pump": pump.name if pump else None,
-            "sold_at": s.sold_at,
-            "recorded_by": user.name
-        })
-    for s in oil_sales:
-        oil = session.get(OilProduct, s.oil_product_id)
-        unified.append({
-            "id": s.id, "product_type": "oil",
-            "product_name": f"{oil.brand} {oil.name}" if oil else "Oil",
-            "attendant_name": s.attendant_name,
-            "quantity": float(s.quantity), "unit": "pcs",
-            "price": s.price_per_unit, "total": s.total_amount,
-            "payment": s.payment_method,
-            "pump": None,
-            "sold_at": s.sold_at,
-            "recorded_by": user.name
-        })
+
+    for tx_ref, items in grouped_transactions.items():
+        if len(items) == 1 and not tx_ref.startswith("M-"):
+            it = items[0]
+            s = it["sale"]
+            paid_val = s.amount_paid if s.amount_paid is not None else s.total_amount
+            change_val = s.change_given if s.change_given is not None else 0.0
+            att_val = s.attendant_name or "Unknown"
+
+            if it["type"] == "fuel":
+                unified.append({
+                    "id": s.id,
+                    "product_type": "fuel",
+                    "product_name": it["product_name"],
+                    "attendant_name": att_val,
+                    "quantity": float(s.liters_sold or 0.0),
+                    "unit": "L",
+                    "price": float(s.price_per_liter or 0.0),
+                    "total_amount": float(s.total_amount or 0.0),
+                    "amount_paid": float(paid_val),
+                    "change_given": float(change_val),
+                    "payment_method": s.payment_method or "cash",
+                    "receipt_no": s.receipt_no,
+                    "pump_name": it["pump_name"],
+                    "sold_at": s.sold_at.isoformat() if isinstance(s.sold_at, datetime) else str(s.sold_at or datetime.now()),
+                    "recorded_by": user.name
+                })
+            else:
+                unified.append({
+                    "id": s.id,
+                    "product_type": "oil",
+                    "product_name": it["product_name"],
+                    "attendant_name": att_val,
+                    "quantity": float(s.quantity or 0.0),
+                    "unit": "pcs",
+                    "price": float(s.price_per_unit or 0.0),
+                    "total_amount": float(s.total_amount or 0.0),
+                    "amount_paid": float(paid_val),
+                    "change_given": float(change_val),
+                    "payment_method": s.payment_method or "cash",
+                    "receipt_no": s.receipt_no,
+                    "pump_name": "-",
+                    "sold_at": s.sold_at.isoformat() if isinstance(s.sold_at, datetime) else str(s.sold_at or datetime.now()),
+                    "recorded_by": user.name
+                })
+        else:
+            first_sale = items[0]["sale"]
+            item_descriptions = []
+            grand_total = 0.0
+
+            for it in items:
+                s = it["sale"]
+                grand_total += float(s.total_amount or 0.0)
+                if it["type"] == "fuel":
+                    item_descriptions.append(f"{it['product_name']} ({s.liters_sold}L)")
+                else:
+                    item_descriptions.append(f"{it['product_name']} ({s.quantity} pcs)")
+
+            combined_name = " + ".join(item_descriptions)
+
+            is_gcash = (first_sale.payment_method or "").lower() == "gcash"
+
+            if is_gcash:
+                grand_paid = grand_total
+                grand_change = 0.0
+            else:
+    # For cash, check if first_sale stored the full transaction payment
+                stored_paid = float(first_sale.amount_paid or 0.0)
+                grand_paid = stored_paid if stored_paid >= grand_total else grand_total
+                grand_change = float(first_sale.change_given or 0.0)
+                
+            unified.append({
+                "id": first_sale.id,
+                "product_type": "multi",
+                "product_name": combined_name,
+                "attendant_name": first_sale.attendant_name or "Unknown",
+                "quantity": float(len(items)),
+                "unit": "items",
+                "price": round(grand_total / len(items), 2) if items else 0.0,
+                "total_amount": round(grand_total, 2),
+                "amount_paid": round(grand_paid, 2),
+                "change_given": round(grand_change, 2),
+                "payment_method": first_sale.payment_method or "cash",
+                "receipt_no": tx_ref,
+                "pump_name": "-",
+                "sold_at": first_sale.sold_at.isoformat() if isinstance(first_sale.sold_at, datetime) else str(first_sale.sold_at or datetime.now()),
+                "recorded_by": user.name
+            })
+
+    if product_type and product_type.lower() in ("fuel", "oil", "multi"):
+        unified = [x for x in unified if x["product_type"] == product_type.lower()]
 
     unified.sort(key=lambda x: x["sold_at"], reverse=True)
 
-    total = sum(x["total"] for x in unified)
+    total_fuel_count = sum(1 if x["product_type"] == "fuel" else x["product_name"].count("L)") for x in unified)
+    total_oil_count  = sum(1 if x["product_type"] == "oil" else x["product_name"].count("pcs)") for x in unified)
+    
+    multi_count = sum(1 for x in unified if x["product_type"] == "multi")
+    total_sum = sum(x["total_amount"] for x in unified)
+
     by_attendant = {}
     for x in unified:
-        by_attendant[x["attendant_name"]] = by_attendant.get(x["attendant_name"], 0) + x["total"]
+        att = x["attendant_name"]
+        by_attendant[att] = round(by_attendant.get(att, 0.0) + x["total_amount"], 2)
 
-    offset = (page-1)*page_size
-    paged = unified[offset:offset+page_size]
+    offset = (page - 1) * page_size
+    paged = unified[offset : offset + page_size]
 
     return {
         "cashier": {"id": user.id, "name": user.name, "email": user.email, "role": user.role},
         "summary": {
             "total_transactions": len(unified),
-            "total_amount": round(total,2),
-            "fuel_tx": len(fuel_sales),
-            "oil_tx": len(oil_sales),
+            "total_amount": round(total_sum, 2),
+            "total_fuel_count": total_fuel_count,
+            "total_oil_count": total_oil_count,
+            "fuel_tx": total_fuel_count,
+            "oil_tx": total_oil_count,
+            "multi_tx": multi_count,
             "by_attendant": by_attendant,
             "period": f"{start_date or 'all'} to {end_date or 'all'}"
         },
         "sales": paged,
-        "page": page, "page_size": page_size, "total_count": len(unified)
+        "page": page,
+        "page_size": page_size,
+        "total_count": len(unified),
+        "total_amount": round(total_sum, 2),
+        "total_fuel_count": total_fuel_count,
+        "total_oil_count": total_oil_count
     }
 
 @router.get("/{user_id}/summary")

@@ -33,7 +33,15 @@ def print_receipt_locally(payload: dict, printer_name: str = "XP-58H"):
     p.text("U-Fuel Receipt\n")
     p.text("------------------------------\n")
     p.set(align='left')
-    p.text(f"{payload.get('label','')} {payload.get('details','')}\n")
+
+    items = payload.get("items", [])
+    if items:
+        for item in items:
+            p.text(f"{item}\n")
+    else:
+        line = f"{payload.get('label','')} {payload.get('details','')}".strip()
+        p.text(f"{line}\n")
+
     p.text(f"Due:  P{payload.get('total',0):.2f}\n")
     p.text(f"Paid: P{payload.get('paid',0):.2f}\n")
     p.set(align='center', bold=True, width=2, height=2)
@@ -56,17 +64,76 @@ def build_change_page(page: ft.Page, auth: dict, transaction: dict = None, paid:
         page.overlay.append(snack)
         page.update()
 
+    s = sale[0] if isinstance(sale, list) and sale else sale
+
+    ref_no = ""
+    if isinstance(s, dict):
+        ref_no = (
+            s.get('receipt_no') or 
+            s.get('transaction_ref') or 
+            s.get('receipt_number') or 
+            s.get('gcash_ref_no') or ""
+        )
+        if not ref_no and 'id' in s:
+            prefix = "F" if tx_type == "fuel" else "O"
+            ref_no = f"{prefix}-{s['id']:06d}"
+
+    tx = transaction or {}
+    if isinstance(tx, list):
+        tx = tx[0] if tx and isinstance(tx[0], dict) else {}
+
+    raw_label = tx.get('label', '') if isinstance(tx, dict) else ""
+    raw_details = tx.get('details', '') if isinstance(tx, dict) else ""
+
+    clean_details = (
+        raw_details
+        .replace("GCash PAID - ", "")
+        .replace("GCash PAID", "")
+        .replace('₱', 'P')
+        .replace('?', '')
+        .strip()
+    )
+    clean_label = raw_label.replace('₱', 'P').strip()
+
+    items_list = []
+    if isinstance(s, dict) and (s.get("fuel_sales") or s.get("oil_sales")):
+        for fs in s.get("fuel_sales", []):
+            fuel_name = (fs.get('fuel_name') or fs.get('name') or "Fuel").split()[0]
+            liters = float(fs.get('liters_sold', 0))
+            total = float(fs.get('total_amount', 0))
+            price = float(fs.get('unit_price') or fs.get('price') or fs.get('price_per_liter') or (total / liters if liters > 0 else 0))
+            items_list.append(f"{fuel_name} {liters:.3f}L x P{price:.2f}")
+
+        for os_item in s.get("oil_sales", []):
+            p_name = os_item.get('product_name') or f"{os_item.get('brand','')} {os_item.get('name','')}".strip() or "Oil"
+            qty = int(os_item.get('quantity', 1))
+            total = float(os_item.get('total_amount', 0))
+            price = float(os_item.get('unit_price') or os_item.get('price') or (total / qty if qty > 0 else total))
+            items_list.append(f"{p_name} {qty} x P{price:.2f}")
+    elif isinstance(auth, dict) and auth.get("cart") and (auth["cart"].get("fuel_items") or auth["cart"].get("oil_items")):
+        cart = auth.get("cart", {})
+        for fi in cart.get("fuel_items", []):
+            fuel_name = (fi.get("fuel_name") or "Fuel").split()[0]
+            liters = float(fi.get("liters_sold", 0))
+            total = float(fi.get("total", 0))
+            price = float(fi.get("unit_price") or fi.get("price") or (total / liters if liters > 0 else 0))
+            items_list.append(f"{fuel_name} {liters:.3f}L x P{price:.2f}")
+
+        for oi in cart.get("oil_items", []):
+            p_name = oi.get("oil_name", "Oil")
+            qty = int(oi.get("quantity", 1))
+            price = float(oi.get("price", 0))
+            items_list.append(f"{p_name} {qty} x P{price:.2f}")
+
     def on_print(e):
-        tx = transaction
-        if isinstance(tx, list):
-            tx = tx[0] if tx and isinstance(tx[0], dict) else {}
         try:
             payload = {
-                "label": tx.get('label', '') if isinstance(tx, dict) else "",
-                "details": tx.get('details', '').replace('₱', 'P').replace('?', '') if isinstance(tx, dict) else "",
+                "label": "" if items_list else clean_label,
+                "details": "" if items_list else clean_details,
                 "total": float(tx.get('total', 0) if isinstance(tx, dict) else 0),
                 "paid": paid,
-                "change": change
+                "change": change,
+                "items": items_list
             }
             
             print_receipt_locally(payload, printer_name="XP-58H")
@@ -75,13 +142,14 @@ def build_change_page(page: ft.Page, auth: dict, transaction: dict = None, paid:
 
         except Exception as err:
             print(f"Local printer failed, falling back to PDF download: {err}")
+
         if not sale:
             show_snack("Printer unavailable & no sale data found for PDF", color=RED)
             return
+
         try:
-            s = sale[0] if isinstance(sale, list) and sale else sale
-            sale_id = s.get('id') or s.get('sale_id')
-            receipt_no = s.get('receipt_no') or s.get('receipt_number') or f"TEMP-{sale_id}"
+            sale_id = s.get('id') or s.get('sale_id') or ref_no or "1"
+            receipt_no = ref_no or f"TEMP-{sale_id}"
             
             path = save_receipt_pdf(auth, sale_id, receipt_no, tx_type)
             show_snack(f"Printer offline - Receipt saved to {path}", color=GREEN_BUTTON)
@@ -93,6 +161,8 @@ def build_change_page(page: ft.Page, auth: dict, transaction: dict = None, paid:
         page.clean()
         page.add(pa_selection(page, auth))
         page.update()
+
+    display_text = ", ".join(items_list) if items_list else f"{clean_label} {clean_details}".strip()
 
     header = ft.Container(
         bgcolor=RED, height=100, padding=20,
@@ -121,14 +191,15 @@ def build_change_page(page: ft.Page, auth: dict, transaction: dict = None, paid:
                 ft.Container(width=420, height=220, bgcolor=ft.Colors.WHITE, border_radius=15,
                     border=ft.Border.all(1.5, ft.Colors.BLACK87), left=40, top=80,
                     alignment=ft.Alignment(0, 0),
+                    padding=15,
                     content=ft.Column(
                         alignment=ft.MainAxisAlignment.CENTER,
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                         spacing=5,
                         controls=[
-                            ft.Text(f"{transaction.get('label','')} {transaction.get('details','')}" if transaction else "", size=12, color="grey"),
+                            ft.Text(display_text, size=12, color="black", text_align=ft.TextAlign.CENTER, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
                             ft.Text(f"Paid: ₱{paid:.2f}", size=14),
-                            ft.Text(f"Due: ₱{float(transaction.get('total',0)):.2f}" if transaction else "", size=14),
+                            ft.Text(f"Due: ₱{float(tx.get('total',0)):.2f}" if tx else "", size=14),
                         ]
                     )
                 ),

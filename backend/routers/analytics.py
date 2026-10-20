@@ -1,9 +1,10 @@
 from typing import Optional, Literal
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, text
 from ..db.database import get_session
+from ..routers.expenses import get_unified_expenses_summary
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
@@ -22,13 +23,13 @@ def get_peak_hours(
     fuel_hourly = {}
     if product_type in ("fuel", "all"):
         fuel_sql = text("""
-            SELECT CAST(strftime('%H', sold_at) AS INTEGER) as hour,
-                   COUNT(*) as cnt,
-                   COALESCE(SUM(total_amount),0) as revenue,
-                   COALESCE(SUM(liters_sold),0) as qty
+            SELECT CAST(EXTRACT(HOUR FROM sold_at) AS INTEGER) as hour,
+                COUNT(*) as cnt,
+                COALESCE(SUM(total_amount),0) as revenue,
+                COALESCE(SUM(liters_sold),0) as qty
             FROM sale
             WHERE sold_at >= :since_date
-              AND (:fuel_id IS NULL OR fuel_id = :fuel_id)
+                AND (:fuel_id IS NULL OR fuel_id = :fuel_id)
             GROUP BY hour
         """)
         rows = session.execute(fuel_sql, {"since_date": since_date, "fuel_id": fuel_id}).fetchall()
@@ -38,13 +39,13 @@ def get_peak_hours(
     oil_hourly = {}
     if product_type in ("oil", "all"):
         oil_sql = text("""
-            SELECT CAST(strftime('%H', sold_at) AS INTEGER) as hour,
-                   COUNT(*) as cnt,
-                   COALESCE(SUM(total_amount),0) as revenue,
-                   COALESCE(SUM(quantity),0) as qty
+            SELECT CAST(EXTRACT(HOUR FROM sold_at) AS INTEGER) as hour,
+                COUNT(*) as cnt,
+                COALESCE(SUM(total_amount),0) as revenue,
+                COALESCE(SUM(quantity),0) as qty
             FROM oil_sale
             WHERE sold_at >= :since_date
-              AND (:oil_id IS NULL OR oil_product_id = :oil_id)
+                AND (:oil_id IS NULL OR oil_product_id = :oil_id)
             GROUP BY hour
         """)
         rows = session.execute(oil_sql, {"since_date": since_date, "oil_id": oil_id}).fetchall()
@@ -118,9 +119,9 @@ def get_demand_heatmap(
     data = []
     if product_type in ("fuel","all"):
         sql_fuel = text("""
-            SELECT CAST(strftime('%w', sold_at) AS INTEGER) as dow,
-                   CAST(strftime('%H', sold_at) AS INTEGER) as hour,
-                   COUNT(*) as cnt
+            SELECT CAST(EXTRACT(DOW FROM sold_at) AS INTEGER) as dow,
+                CAST(EXTRACT(HOUR FROM sold_at) AS INTEGER) as hour,
+                COUNT(*) as cnt
             FROM sale WHERE sold_at >= :since_date GROUP BY dow, hour
         """)
         for r in session.execute(sql_fuel, {"since_date": since_date}).fetchall():
@@ -287,63 +288,106 @@ def get_oil_profit_margins(days: int = 30, session: Session = Depends(get_sessio
         })
     return result
 
-@router.get("/profit-margins/unified")
-def get_unified_profit_margins(days: int = 30, session: Session = Depends(get_session)):
-    fuel_margins = get_fuel_profit_margins(days=days, session=session)
-    oil_margins = get_oil_profit_margins(days=days, session=session)
+@router.get("/net-profit/summary")
+def get_net_profit_summary(
+    days: int = Query(30, description="Last N days to analyze"),
+    session: Session = Depends(get_session)
+):
+    """
+    Calculates Net Profit across the station:
+    Net Profit = Total Revenue (Fuel + Oil) - Total Expenses (Operational + Restocks)
+    """
+    if days == 1:
+        start_date = date.today()
+        end_date = date.today()
+        since = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        start_date = date.today() - timedelta(days=days)
+        end_date = date.today()
+        since = datetime.now() - timedelta(days=days)
+
+    fuel_sql = text("SELECT COALESCE(SUM(total_amount), 0) FROM sale WHERE sold_at >= :since AND payment_status = 'paid'")
+    oil_sql = text("SELECT COALESCE(SUM(total_amount), 0) FROM oil_sale WHERE sold_at >= :since AND payment_status = 'paid'")
+
+    fuel_revenue = float(session.execute(fuel_sql, {"since": since}).scalar() or 0.0)
+    oil_revenue = float(session.execute(oil_sql, {"since": since}).scalar() or 0.0)
+    total_revenue = fuel_revenue + oil_revenue
+
+    expenses_data = get_unified_expenses_summary(start_date=start_date, end_date=end_date, session=session)
+    expense_summary = expenses_data["summary"]
+
+    operational_expenses = expense_summary["operational_expenses"]
+    fuel_restock_expenses = expense_summary["fuel_restock_expenses"]
+    oil_restock_expenses = expense_summary["oil_restock_expenses"]
+    total_expenses = expense_summary["total_expenses"]
+
+    total_cogs = fuel_restock_expenses + oil_restock_expenses
+    gross_profit = total_revenue - total_cogs
+    net_profit = total_revenue - total_expenses
     
-    total_fuel_rev = sum(f["revenue"] for f in fuel_margins)
-    total_fuel_cost = sum(f["total_cost"] for f in fuel_margins)
-    total_fuel_profit = sum(f["profit"] for f in fuel_margins)
-    
-    total_oil_rev = sum(o["revenue"] for o in oil_margins)
-    total_oil_cost = sum(o["total_cost"] for o in oil_margins)
-    total_oil_profit = sum(o["profit"] for o in oil_margins)
-    
-    combined_rev = total_fuel_rev + total_oil_rev
-    combined_cost = total_fuel_cost + total_oil_cost
-    combined_profit = total_fuel_profit + total_oil_profit
-    combined_margin = (combined_profit / combined_rev * 100) if combined_rev else 0
-    
+    net_profit_margin = (net_profit / total_revenue * 100) if total_revenue > 0 else 0.0
+    gross_profit_margin = (gross_profit / total_revenue * 100) if total_revenue > 0 else 0.0
+
     return {
-        "fuel": fuel_margins,
-        "oil": oil_margins,
-        "summary": {
-            "fuel_revenue": round(total_fuel_rev,2),
-            "fuel_cost": round(total_fuel_cost,2),
-            "fuel_profit": round(total_fuel_profit,2),
-            "fuel_margin_percent": round((total_fuel_profit/total_fuel_rev*100) if total_fuel_rev else 0,2),
-            "oil_revenue": round(total_oil_rev,2),
-            "oil_cost": round(total_oil_cost,2),
-            "oil_profit": round(total_oil_profit,2),
-            "oil_margin_percent": round((total_oil_profit/total_oil_rev*100) if total_oil_rev else 0,2),
-            "total_revenue": round(combined_rev,2),
-            "total_cost": round(combined_cost,2),
-            "total_profit": round(combined_profit,2),
-            "total_margin_percent": round(combined_margin,2)
+        "period_days": days,
+        "date_range": f"{start_date} to {end_date}",
+        "revenue": {
+            "fuel_revenue": round(fuel_revenue, 2),
+            "oil_revenue": round(oil_revenue, 2),
+            "total_revenue": round(total_revenue, 2)
+        },
+        "expenses": {
+            "operational_expenses": round(operational_expenses, 2),
+            "fuel_restock_expenses": round(fuel_restock_expenses, 2),
+            "oil_restock_expenses": round(oil_restock_expenses, 2),
+            "total_expenses": round(total_expenses, 2)
+        },
+        "profitability": {
+            "gross_profit": round(gross_profit, 2),
+            "gross_profit_margin_percent": round(gross_profit_margin, 2),
+            "net_profit": round(net_profit, 2),
+            "net_profit_margin_percent": round(net_profit_margin, 2)
         }
     }
 
 @router.get("/revenue/summary")
-def get_revenue_summary(days: int = 30, session: Session = Depends(get_session)):
-    since = datetime.now() - timedelta(days=days)
-    fuel_sql = text("SELECT COALESCE(SUM(total_amount),0), COALESCE(SUM(liters_sold),0), COUNT(*) FROM sale WHERE sold_at >= :since")
-    oil_sql = text("SELECT COALESCE(SUM(total_amount),0), COALESCE(SUM(quantity),0), COUNT(*) FROM oil_sale WHERE sold_at >= :since")
+def get_revenue_summary(days: int = Query(30), session: Session = Depends(get_session)):
+    """
+    Returns revenue, transaction count, and true Net Profit metrics for the given period.
+    """
+    if days == 1:
+        since = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        since = datetime.now() - timedelta(days=days)
+
+    fuel_sql = text("SELECT COALESCE(SUM(total_amount),0), COALESCE(SUM(liters_sold),0), COUNT(*) FROM sale WHERE sold_at >= :since AND payment_status = 'paid'")
+    oil_sql = text("SELECT COALESCE(SUM(total_amount),0), COALESCE(SUM(quantity),0), COUNT(*) FROM oil_sale WHERE sold_at >= :since AND payment_status = 'paid'")
+    
     f_rev, f_liters, f_cnt = session.execute(fuel_sql, {"since": since}).one()
     o_rev, o_qty, o_cnt = session.execute(oil_sql, {"since": since}).one()
-    unified = get_unified_profit_margins(days=days, session=session)
-    summary = unified["summary"]
+
+    net_profit_data = get_net_profit_summary(days=days, session=session)
+    expenses = net_profit_data["expenses"]
+    profitability = net_profit_data["profitability"]
     
     return {
         "period_days": days,
-        "fuel": {"revenue": round(f_rev or 0,2), "liters": round(f_liters or 0,2), "transactions": f_cnt},
-        "oil": {"revenue": round(o_rev or 0,2), "quantity": int(o_qty or 0), "transactions": o_cnt},
+        "fuel": {
+            "revenue": round(f_rev or 0, 2),
+            "liters": round(f_liters or 0, 2),
+            "transactions": f_cnt
+        },
+        "oil": {
+            "revenue": round(o_rev or 0, 2),
+            "quantity": int(o_qty or 0),
+            "transactions": o_cnt
+        },
         "combined": {
-            "revenue": round((f_rev or 0) + (o_rev or 0),2),
+            "revenue": round((f_rev or 0) + (o_rev or 0), 2),
             "transactions": (f_cnt or 0) + (o_cnt or 0),
-            "cost": summary["total_cost"],
-            "profit": summary["total_profit"],
-            "margin_percent": summary["total_margin_percent"]
+            "total_expenses": expenses["total_expenses"],
+            "net_profit": profitability["net_profit"],
+            "net_margin_percent": profitability["net_profit_margin_percent"]
         }
     }
 
@@ -377,7 +421,7 @@ def get_attendant_rankings(
     Example: /analytics/attendants/ranking?days=7&product_type=all&sort_by=revenue
     """
     since = datetime.now() - timedelta(days=days)
-
+    
     fuel_stats = {}
     if product_type in ("fuel", "all"):
         fuel_sql = text("""
@@ -588,7 +632,7 @@ def get_attendant_performance(
     fuel_mix = [{"fuel_name": r[0], "transactions": r[1], "liters": round(r[2],2), "revenue": round(r[3],2)} for r in session.execute(mix_sql, {"name": attendant_name, "since": since}).fetchall()]
 
     hourly_sql = text("""
-        SELECT CAST(strftime('%H', sold_at) AS INTEGER) as hour, COUNT(*) as cnt, SUM(total_amount) as rev
+        SELECT CAST(EXTRACT(HOUR FROM sold_at) AS INTEGER) as hour, COUNT(*) as cnt, SUM(total_amount) as rev
         FROM sale WHERE attendant_name=:name AND sold_at>=:since GROUP BY hour
     """)
     hourly = [{"hour": r[0], "transactions": r[1], "revenue": round(r[2],2)} for r in session.execute(hourly_sql, {"name": attendant_name, "since": since}).fetchall()]

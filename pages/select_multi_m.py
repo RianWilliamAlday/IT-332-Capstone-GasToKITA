@@ -528,7 +528,6 @@ def build_multi_page_mobile(page: ft.Page, auth: dict):
         )
 
     def oil_card_image(oil: dict, box_height: int):
-        """Light-grey rounded image area: product photo if set, else the water-drop icon."""
         icon = ft.Icon(ft.Icons.WATER_DROP_OUTLINED, size=44, color="black")
         img_url = oil.get("image_url")
         content = ft.Image(

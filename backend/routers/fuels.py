@@ -1,5 +1,5 @@
 from urllib import request
-
+from ..services.auth import get_current_user, User
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from ..db.database import get_session, Fuel, RestockLog, FuelBatch, FuelSaleBatch
@@ -28,6 +28,7 @@ def get_current_fifo_price(session: Session, fuel_id: int) -> float:
 def ensure_initial_batch(session: Session, fuel: Fuel):
     """Create initial batch from existing stock if no batches exist (migration)"""
     existing = session.exec(select(FuelBatch).where(FuelBatch.fuel_id == fuel.id)).first()
+    current_user: User = Depends(get_current_user)
     if not existing and fuel.actual_liters > 0:
         batch = FuelBatch(
             fuel_id=fuel.id,
@@ -36,7 +37,7 @@ def ensure_initial_batch(session: Session, fuel: Fuel):
             cost_per_liter=fuel.price * 0.8,
             selling_price=fuel.price,
             supplier="Initial Stock",
-            restocked_by="system",
+            restocked_by=current_user.id,
             restocked_at=fuel.last_restocked or datetime.now()
         )
         session.add(batch)
@@ -129,6 +130,7 @@ def restock_fuel(fuel_id: int, data: RestockRequest, session: Session = Depends(
     if data.selling_price <= 0:
         raise HTTPException(400, "Selling price must be positive")
     ensure_initial_batch(session, fuel)
+    current_user: User = Depends(get_current_user)
 
     cost_per_liter = data.cost / data.liters_added if data.liters_added > 0 else 0
 
@@ -139,7 +141,7 @@ def restock_fuel(fuel_id: int, data: RestockRequest, session: Session = Depends(
         cost_per_liter=cost_per_liter,
         selling_price=data.selling_price,
         supplier=data.supplier,
-        restocked_by="admin",
+        restocked_by=current_user.id,
         restocked_at=datetime.now()
     )
     session.add(batch)

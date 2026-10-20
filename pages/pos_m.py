@@ -1,5 +1,5 @@
 import flet as ft
-from pages.api_client import create_fuel_sale, create_oil_sale, submit_multi_sale
+from pages.api_client_m import create_fuel_sale, create_oil_sale, submit_multi_sale
 from pages.sidebar_m import Sidebar
 
 MOBILE_RED = "#8B0000"
@@ -101,7 +101,6 @@ def build_pos_page_mobile(page: ft.Page, auth: dict, transaction: dict = None):
                 qty = transaction.get("quantity", 1)
                 result = create_oil_sale(auth, oil_id, qty, attendant, "cash", paid["value"])
             else:
-                # multi-item cart (uses auth["cart"])
                 result = submit_multi_sale(
                     auth, attendant_name=attendant,
                     payment_method="cash", amount_paid=paid["value"],
@@ -110,7 +109,6 @@ def build_pos_page_mobile(page: ft.Page, auth: dict, transaction: dict = None):
             auth.pop("fuels_data", None)
             auth.pop("oils_data", None)
 
-            # Keep a copy of what was bought for the change page, then clear the cart
             cart = auth.get("cart") or {}
             receipt_tx = dict(transaction)
             receipt_tx["fuel_items"] = list(cart.get("fuel_items", []))
@@ -139,7 +137,6 @@ def build_pos_page_mobile(page: ft.Page, auth: dict, transaction: dict = None):
                 ft.Row(controls=[ft.Text("U-FUEL", size=16, weight=ft.FontWeight.BOLD, color="white"), ft.Container(content=ft.Image(src="u-fuel_logo.jpg", width=40, height=40, fit=ft.BoxFit.CONTAIN), bgcolor="white", border_radius=8, padding=4, width=40, height=40)], spacing=8),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
         padding=ft.Padding.only(left=8, right=20, top=10, bottom=10),
     )

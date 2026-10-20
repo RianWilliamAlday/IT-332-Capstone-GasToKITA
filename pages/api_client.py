@@ -1,4 +1,5 @@
 import os, requests, pathlib
+from typing import Optional, Dict, Any, List
 
 BASE_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 DEFAULT_ATTENDANTS = ["Attendant 1", "Attendant 2", "Attendant 3"]
@@ -81,7 +82,7 @@ def sync_dipstick(auth: dict, fuel_id: int, cm: int):
         raise Exception(detail)
     return r.json()
 
-def create_oil_product(auth: dict, brand: str, name: str, stock: int, price: float, variant: str = "", low_threshold: int = 5):
+def create_oil_product(auth: dict, brand: str, name: str, stock: int, price: float, cost: float = 0.0, variant: str = "", low_threshold: int = 5):
     payload = {"brand": brand, "name": name, "variant": variant or None, "stock": stock, "price": price, "cost": cost, "low_stock_threshold": low_threshold}
     r = requests.post(f"{BASE_URL}/oils/", json=payload, headers=_headers(auth), timeout=10)
     if r.status_code >= 400:
@@ -122,13 +123,19 @@ def get_oil_profit_margins(auth: dict, days: int = 30):
     r.raise_for_status()
     return r.json()
 
-def get_unified_profit_margins(auth: dict, days: int = 30):
-    r = requests.get(f"{BASE_URL}/analytics/profit-margins/unified", params={"days": days}, headers=_headers(auth), timeout=10)
+def get_net_profit_summary(auth: dict, days: int = 30):
+    r = requests.get(f"{BASE_URL}/analytics/net-profit/summary", params={"days": days}, headers=_headers(auth), timeout=10)
     r.raise_for_status()
     return r.json()
 
 def get_revenue_summary(auth: dict, days: int = 30):
     r = requests.get(f"{BASE_URL}/analytics/revenue/summary", params={"days": days}, headers=_headers(auth), timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def get_daily_liters_summary(auth: dict, fuel_id: Optional[int] = None):
+    params = {"fuel_id": fuel_id} if fuel_id else {}
+    r = requests.get(f"{BASE_URL}/api/sales/daily-liters-summary", params=params, headers=_headers(auth), timeout=8)
     r.raise_for_status()
     return r.json()
 
@@ -147,20 +154,86 @@ def get_unified_history(auth: dict, product_type=None, attendant_name=None, star
     r.raise_for_status()
     return r.json()
 
-def update_oil(auth: dict, oil_id: int, payload: dict):
-    url = f"{BASE_URL}/oils/{oil_id}" 
-    headers = {
-        "Authorization": f"Bearer {auth.get('token', '')}",
-        "Content-Type": "application/json"
-    }
-    response = requests.put(url, json=payload, headers=headers)
-    if response.status_code != 200:
-        raise Exception(f"Server error ({response.status_code}): {response.text}")
-    return response.json()
+def get_cashier_history(auth: dict, cashier_id: int, product_type=None, attendant_name=None, start_date=None, end_date=None, payment_method=None, page=1, page_size=50):
+    """GET /api/employees/{cashier_id}/history - history limited to one cashier account."""
+    params = {"page": page, "page_size": page_size}
+    if product_type and product_type != "all": params["product_type"] = product_type
+    if attendant_name and attendant_name != "all": params["attendant_name"] = attendant_name
+    if payment_method: params["payment_method"] = payment_method
+    if start_date: params["start_date"] = start_date
+    if end_date: params["end_date"] = end_date
+    r = requests.get(f"{BASE_URL}/api/employees/{cashier_id}/history", params=params, headers=_headers(auth), timeout=8)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Failed to fetch cashier history ({r.status_code})")
+    return r.json()
 
-def _headers(auth: dict):
-    token = auth.get("access_token") or auth.get("token")
-    return {"Authorization": f"Bearer {token}"} if token else {}
+def submit_multi_sale(auth: dict, *args, **kwargs):
+    data = {}
+    for a in args:
+        if a is None:
+            continue
+        if isinstance(a, dict):
+            data.update(a)
+        elif isinstance(a, (list, tuple)):
+            first = a[0] if a else {}
+            if isinstance(first, dict) and "pump_id" in first:
+                data["fuel_items"] = list(a)
+            elif isinstance(first, dict) and ("oil_id" in first or "oil_product_id" in first):
+                data["oil_items"] = list(a)
+            elif not a:
+                pass
+            else:
+                raise TypeError(f"submit_multi_sale: can't tell what this list is: {a!r}")
+        elif isinstance(a, str):
+            if a.strip().lower() in ("cash", "gcash"):
+                data["payment_method"] = a.strip().lower()
+            else:
+                data["attendant_name"] = a
+        elif isinstance(a, (int, float)) and not isinstance(a, bool):
+            data["amount_paid"] = float(a)
+        else:
+            raise TypeError(f"submit_multi_sale: unexpected argument {a!r}")
+    data.update(kwargs)
+
+    cart = auth.get("cart", {})
+    if "fuel_items" not in data or not data["fuel_items"]:
+        data["fuel_items"] = cart.get("fuel_items", [])
+    if "oil_items" not in data or not data["oil_items"]:
+        data["oil_items"] = cart.get("oil_items", [])
+
+    if "attendant_name" not in data or not data["attendant_name"]:
+        attendant = auth.get("selected_attendant") or auth.get("name") or auth.get("user") or "Attendant 1"
+        if isinstance(attendant, dict):
+            attendant = attendant.get("name", "Attendant 1")
+        data["attendant_name"] = attendant
+
+    data.setdefault("payment_method", "cash")
+    data.setdefault("amount_paid", 0)
+
+    fixed = []
+    for o in data["oil_items"]:
+        o = dict(o)
+        if "oil_id" not in o and "oil_product_id" in o:
+            o["oil_id"] = o["oil_product_id"]
+        fixed.append(o)
+    data["oil_items"] = fixed
+
+    r = requests.post(f"{BASE_URL}/api/sales/multi", json=data, headers=_headers(auth), timeout=15)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Multi sale failed {r.status_code}")
+    return r.json()
+
+create_multi_sale = submit_multi_sale
+
+def update_oil(auth: dict, oil_id: int, payload: dict):
+    r = requests.put(f"{BASE_URL}/oils/{oil_id}", json=payload, headers=_headers(auth), timeout=10)
+    if r.status_code != 200:
+        raise Exception(f"Server error ({r.status_code}): {r.text}")
+    return r.json()
 
 def get_attendant_rankings(auth, days=30, product_type="all", sort_by="revenue", limit=10, include_breakdown=False):
     r = requests.get(f"{BASE_URL}/analytics/attendants/ranking", params={
@@ -198,16 +271,6 @@ def save_receipt_pdf(auth: dict, sale_id: int, receipt_no: str, product_type="fu
     file_path.write_bytes(pdf_bytes)
     return str(file_path)
 
-def update_fuel_threshold(auth, fuel_id: int, threshold: float):
-    headers = {"Authorization": f"Bearer {auth.get('token')}"}
-    resp = requests.patch(
-        f"{BASE_URL}/api/fuels/{fuel_id}/threshold", 
-        json={"threshold": threshold}, 
-        headers=headers
-    )
-    resp.raise_for_status()
-    return resp.json()
-
 def get_active_attendants(auth: dict):
     """
     GET /api/attendants/active
@@ -244,18 +307,22 @@ def get_attendant_names(auth: dict) -> list[str]:
 
     return DEFAULT_ATTENDANTS
 
-def create_gcash_dialog_checkout(auth: dict, product_type: str = "fuel", attendant_name: str = "", pump_id: int = None, fuel_id: int = None, liters_sold: float = None, oil_product_id: int = None, quantity: int = None):
+def create_gcash_dialog_checkout(auth: dict, product_type: str = "fuel", attendant_name: str = "", pump_id: int = None, fuel_id: int = None, liters_sold: float = None, oil_product_id: int = None, quantity: int = None, fuel_items: list = None, oil_items: list = None):
     """
-    Called when user clicks GCash button INSIDE liters/qty dialog
-    This is the endpoint that creates pending sale + PayMongo checkout_url for QR
+    Called when user clicks GCash button INSIDE liters/qty dialog (or the multi-cart checkout)
     POST /api/payments/gcash/dialog-checkout
+    product_type: "fuel" | "oil" | "multi"
+    For "multi": fuel_items=[{"pump_id", "liters_sold"}], oil_items=[{"oil_product_id", "quantity"}]
     Returns: {sale_id, checkout_id, checkout_url, total_amount, status}
     """
     payload = {
         "product_type": product_type,
         "attendant_name": attendant_name
     }
-    if product_type == "fuel":
+    if product_type == "multi":
+        payload["fuel_items"] = fuel_items or []
+        payload["oil_items"] = oil_items or []
+    elif product_type == "fuel":
         if pump_id is not None: payload["pump_id"] = pump_id
         if fuel_id is not None: payload["fuel_id"] = fuel_id
         if liters_sold is not None: payload["liters_sold"] = float(liters_sold)
@@ -308,3 +375,156 @@ def create_gcash_checkout_legacy(auth: dict, amount: float, description: str = "
         except: detail = r.text
         raise Exception(detail)
     return r.json()
+
+def get_unified_expenses(auth: dict, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
+    params = {}
+    if start_date: params["start_date"] = start_date
+    if end_date: params["end_date"] = end_date
+    r = requests.get(f"{BASE_URL}/expenses/", params=params, headers=_headers(auth), timeout=8)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Failed to fetch expenses ({r.status_code})")
+    return r.json()
+
+def get_expenses_summary(auth: dict, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
+    params = {}
+    if start_date: params["start_date"] = start_date
+    if end_date: params["end_date"] = end_date
+    r = requests.get(f"{BASE_URL}/expenses/summary", params=params, headers=_headers(auth), timeout=8)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Failed to fetch expense summary ({r.status_code})")
+    return r.json()
+
+def create_operational_expense(auth: dict, category: str, amount: float, description: str = "") -> Dict[str, Any]:
+    params = {"category": category, "amount": amount, "description": description}
+    r = requests.post(f"{BASE_URL}/expenses/", params=params, headers=_headers(auth), timeout=8)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Record operational expense failed ({r.status_code})")
+    return r.json()
+
+def delete_operational_expense(auth: dict, expense_id: int) -> Dict[str, Any]:
+    r = requests.delete(f"{BASE_URL}/expenses/{expense_id}", headers=_headers(auth), timeout=8)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Delete operational expense failed ({r.status_code})")
+    return r.json()
+
+def get_cashiers(auth: dict) -> List[Dict[str, Any]]:
+    r = requests.get(f"{BASE_URL}/api/employees/", headers=_headers(auth), timeout=8)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Failed to fetch cashiers ({r.status_code})")
+    return r.json()
+
+def get_attendants(auth: dict, include_inactive: bool = False) -> List[Dict[str, Any]]:
+    params = {"include_inactive": include_inactive}
+    r = requests.get(f"{BASE_URL}/api/employees/cashiers", params=params, headers=_headers(auth), timeout=8)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Failed to fetch attendants ({r.status_code})")
+    return r.json()
+
+def create_attendant(auth: dict, name: str, employee_id: str = None, contact: str = None) -> Dict[str, Any]:
+    payload = {"name": name, "employee_id": employee_id, "contact": contact}
+    r = requests.post(f"{BASE_URL}/api/employees/attendants", json=payload, headers=_headers(auth), timeout=8)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Failed to add attendant ({r.status_code})")
+    return r.json()
+
+def update_attendant(auth: dict, attendant_id: int, name: str = None, employee_id: str = None, contact: str = None, is_active: bool = None) -> Dict[str, Any]:
+    payload = {}
+    if name is not None: payload["name"] = name
+    if employee_id is not None: payload["employee_id"] = employee_id
+    if contact is not None: payload["contact"] = contact
+    if is_active is not None: payload["is_active"] = is_active
+    
+    r = requests.put(f"{BASE_URL}/api/employees/attendants/{attendant_id}", json=payload, headers=_headers(auth), timeout=8)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Failed to update attendant ({r.status_code})")
+    return r.json()
+
+def delete_attendant(auth: dict, attendant_id: int, force: bool = False) -> Dict[str, Any]:
+    params = {"force": force}
+    r = requests.delete(f"{BASE_URL}/api/employees/attendants/{attendant_id}", params=params, headers=_headers(auth), timeout=8)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Failed to delete attendant ({r.status_code})")
+    return r.json()
+
+def _normalize_inventory_item(item: dict) -> dict:
+    """The /fuel endpoints return the fuel-only schema (fuel_id/fuel_name, no product_type/product_name/unit).
+    Map it to the unified schema the inventory page expects."""
+    if item.get("product_type"):
+        return item
+    fixed = dict(item)
+    fixed["product_type"] = "fuel"
+    fixed["product_id"] = item.get("product_id") or item.get("fuel_id")
+    fixed["product_name"] = item.get("product_name") or item.get("fuel_name")
+    fixed["unit"] = item.get("unit") or "L"
+    return fixed
+
+def get_low_stock(auth: dict, include_warning=True, product_type: str = "all"):
+    try:
+        r = requests.get(f"{BASE_URL}/api/ai-inventory/low-stock", params={"product_type":product_type,"include_warning":include_warning}, headers=_headers(auth), timeout=5)
+        r.raise_for_status()
+        return r.json()
+    except Exception as ex:
+        print(f"[low-stock] {ex}")
+        return {"total_count":0, "items":[]}
+
+def get_ai_inventory_optimization(auth: dict, product_type: str = "all") -> List[Dict[str, Any]]:
+    endpoint = f"{BASE_URL}/api/ai-inventory/ai-inventory-optimization"
+    if product_type in ["fuel", "oil"]:
+        endpoint += f"/{product_type}"
+
+    r = requests.get(endpoint, headers=_headers(auth), timeout=60)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Failed to fetch AI optimization data ({r.status_code})")
+    return [_normalize_inventory_item(i) for i in r.json()]
+
+def get_inventory_optimization(auth: dict, product_type: str = "all"):
+    endpoint = f"{BASE_URL}/api/ai-inventory/inventory-optimization"
+    if product_type in ["fuel", "oil"]:
+        endpoint += f"/{product_type}"
+    r = requests.get(endpoint, headers=_headers(auth), timeout=8)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Failed to fetch inventory metrics ({r.status_code})")
+    return [_normalize_inventory_item(i) for i in r.json()]
+
+def export_history_csv(auth: dict, product_type=None, start_date=None, end_date=None):
+    params = {}
+    if product_type and product_type != "all": params["product_type"] = product_type
+    if start_date: params["start_date"] = start_date
+    if end_date: params["end_date"] = end_date
+    try:
+        r = requests.get(f"{BASE_URL}/api/sales/history/export", params=params, headers=_headers(auth), timeout=15)
+        r.raise_for_status()
+        return r.text
+    except Exception as ex:
+        raise Exception(f"Export failed: {ex}")
+
+def upload_oil_image(auth: dict, oil_id: int, file_bytes: bytes, file_name: str) -> dict:
+    """Uploads an image for a specific oil product to Supabase Storage via backend."""
+    headers = {"Authorization": f"Bearer {auth.get('token')}"}
+    files = {"file": (file_name, file_bytes, "image/jpeg")}
+    res = requests.post(f"{BASE_URL}/oils/{oil_id}/upload-image", headers=headers, files=files)
+    if res.status_code != 200:
+        raise Exception(f"Failed to upload image: {res.text}")
+    return res.json()

@@ -10,7 +10,7 @@ BASE_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 try:
     from api_client import (
         get_peak_hours, get_heatmap, get_fuel_profit_margins,
-        get_oil_profit_margins, get_unified_profit_margins,
+        get_oil_profit_margins, get_net_profit_summary,
         get_revenue_summary, get_top_oils, get_attendant_rankings,
         get_attendant_performance, get_attendant_leaderboard
     )
@@ -18,7 +18,7 @@ except ImportError:
     try:
         from .api_client import (
             get_peak_hours, get_heatmap, get_fuel_profit_margins,
-            get_oil_profit_margins, get_unified_profit_margins,
+            get_oil_profit_margins, get_net_profit_summary,
             get_revenue_summary, get_top_oils, get_attendant_leaderboard,
             get_attendant_performance, get_attendant_rankings
         )
@@ -39,8 +39,8 @@ except ImportError:
         def get_oil_profit_margins(auth, days=30):
             r = requests.get(f"{BASE_URL}/analytics/profit-margins/oil", params={"days": days}, headers=_headers(auth), timeout=10)
             r.raise_for_status(); return r.json()
-        def get_unified_profit_margins(auth, days=30):
-            r = requests.get(f"{BASE_URL}/analytics/profit-margins/unified", params={"days": days}, headers=_headers(auth), timeout=10)
+        def get_net_profit_summary(auth, days=30):
+            r = requests.get(f"{BASE_URL}/analytics/net-profit/summary", params={"days": days}, headers=_headers(auth), timeout=10)
             r.raise_for_status(); return r.json()
         def get_revenue_summary(auth, days=30):
             r = requests.get(f"{BASE_URL}/analytics/revenue/summary", params={"days": days}, headers=_headers(auth), timeout=10)
@@ -108,8 +108,8 @@ def analytics_page(page: ft.Page, auth: dict):
 
     summary_row = ft.Row(controls=[
         make_summary_card("Total Revenue", rev_text, ft.Icons.ATTACH_MONEY, "#2E7D32"),
-        make_summary_card("Total Profit", profit_text, ft.Icons.TRENDING_UP, "#1565C0"),
-        make_summary_card("Margin", margin_text, ft.Icons.PIE_CHART, DARK_RED),
+        make_summary_card("Net Profit", profit_text, ft.Icons.TRENDING_UP, "#1565C0"),
+        make_summary_card("Net Margin", margin_text, ft.Icons.PIE_CHART, DARK_RED),
         make_summary_card("Peak Window", peak_text, ft.Icons.ACCESS_TIME, "#4A148C"),
     ], spacing=12, wrap=True)
 
@@ -243,20 +243,28 @@ def analytics_page(page: ft.Page, auth: dict):
     def build_fuel_pie(fuel_data):
         if not fuel_data: return ft.Text("No fuel sales")
         total = sum([f.get("liters_sold",0) for f in fuel_data]) or 1
-        colors = ["#8B0000", "#C62828", "#EF5350"]
+        fuel_colors = {
+            "regular": ("#15803D", "#FFFFFF"),
+            "premium": (DARK_RED, "#FFFFFF"),
+            "diesel":  ("#F5C243", "#3B2A00"),
+        }
+        fallback_colors = [("#1565C0", "#FFFFFF"), ("#D97706", "#FFFFFF"), ("#6B6B6B", "#FFFFFF")]
         sections = []
         legend = []
         for i, f in enumerate(fuel_data):
             liters = f.get("liters_sold",0)
             pct = liters/total*100
+            fname = (f.get("fuel_name") or "").lower()
+            fill, label_color = next((c for k, c in fuel_colors.items() if k in fname), fallback_colors[i % len(fallback_colors)])
             sections.append(fch.PieChartSection(
                 value=float(liters),
                 title=f"{pct:.0f}%" if pct > 5 else "",
-                color=colors[i%len(colors)],
+                title_style=ft.TextStyle(size=12, weight=ft.FontWeight.BOLD, color=label_color),
+                color=fill,
                 radius=70
             ))
             legend.append(ft.Row([
-                ft.Container(width=10,height=10,bgcolor=colors[i%len(colors)],border_radius=2),
+                ft.Container(width=10,height=10,bgcolor=fill,border_radius=2),
             ft.Text(f"{f.get('fuel_name')} - {pct:.1f}% ({liters:.0f}L)", size=11)
         ]))
         return ft.Column([
@@ -438,13 +446,15 @@ def analytics_page(page: ft.Page, auth: dict):
                 print(f"[analytics] Error retrieving revenue structural block: {e}")
 
             try:
-                uni = get_unified_profit_margins(auth, days=days)
-                if uni and "summary" in uni:
-                    profit_text.value = f"₱{uni['summary'].get('total_profit', 0):,.0f}"
-                    margin_text.value = f"{uni['summary'].get('total_margin_percent', 0):.1f}%"
+                net = get_net_profit_summary(auth, days=days)
+                if net and "profitability" in net:
+                    np_val = net['profitability'].get('net_profit', 0)
+                    profit_text.value = f"₱{np_val:,.0f}"
+                    profit_text.color = "#2E7D32" if np_val >= 0 else "#C62828"
+                    margin_text.value = f"{net['profitability'].get('net_profit_margin_percent', 0):.1f}%"
                 safe_ui_refresh()
             except Exception as e:
-                print(f"[analytics] Error evaluating corporate profit metrics: {e}")
+                print(f"[analytics] Error loading net profit summary: {e}")
 
             try:
                 peak = get_peak_hours(auth, days=days, product_type=prod)
@@ -597,14 +607,13 @@ def analytics_page(page: ft.Page, auth: dict):
     header = ft.Container(
         content=ft.Row([
             ft.IconButton(icon=ft.Icons.ARROW_BACK, icon_color=TEXT_WHITE, on_click=go_dashboard),
-            ft.Text("Analytics Dashboard", color=TEXT_WHITE, size=20, weight=ft.FontWeight.BOLD),
+            ft.Text("Analytics Dashboard", color=TEXT_WHITE, size=22, weight=ft.FontWeight.BOLD),
             ft.Row([
-                ft.Text("U-Fuel", color=TEXT_WHITE, size=16, weight=ft.FontWeight.BOLD),
-                ft.Container(width=38, height=38, bgcolor=TEXT_WHITE, border_radius=18, clip_behavior=ft.ClipBehavior.HARD_EDGE,
-                             content=ft.Image(src="u-fuel_logo.jpg", fit=ft.BoxFit.CONTAIN, border_radius=18)),
+                ft.Text("U-Fuel", color=TEXT_WHITE, size=18, weight=ft.FontWeight.BOLD),
+                ft.Container(width=42, height=42, bgcolor=TEXT_WHITE, border_radius=20, clip_behavior=ft.ClipBehavior.HARD_EDGE, content=ft.Image(src="u-fuel_logo.jpg", fit=ft.BoxFit.CONTAIN, border_radius=20)),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        bgcolor=DARK_RED, padding=ft.Padding.symmetric(vertical=16, horizontal=20),
+        bgcolor=DARK_RED, padding=ft.Padding.symmetric(vertical=18, horizontal=24),
     )
 
     footer = ft.Container(

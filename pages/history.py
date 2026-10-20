@@ -1,40 +1,12 @@
 import flet as ft
 import os, requests, time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from concurrent.futures import ThreadPoolExecutor
+from pages.api_client import get_unified_history, export_history_csv
 
-DARK_RED   = "#8B0000"
+DARK_RED   = "#A61E22"
 TEXT_WHITE = "#FFFFFF"
 BASE_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
-
-def _headers(auth: dict):
-    token = auth.get("access_token") or auth.get("token")
-    return {"Authorization": f"Bearer {token}"} if token else {}
-
-def get_unified_history(auth: dict, product_type=None, attendant_name=None, start_date=None, end_date=None, page=1, page_size=100):
-    params = {"page": page, "page_size": page_size}
-    if product_type and product_type != "all": params["product_type"] = product_type
-    if attendant_name and attendant_name != "all": params["attendant_name"] = attendant_name
-    if start_date: params["start_date"] = start_date
-    if end_date: params["end_date"] = end_date
-    try:
-        r = requests.get(f"{BASE_URL}/api/sales/history", params=params, headers=_headers(auth), timeout=8)
-        r.raise_for_status()
-        return r.json()
-    except Exception as ex:
-        print(f"[history] {ex}")
-        return {"sales":[],"total_count":0,"total_amount":0,"total_liters":0,"total_oil_pcs":0}
-
-def export_history_csv(auth: dict, product_type=None, start_date=None, end_date=None):
-    params = {}
-    if product_type and product_type != "all": params["product_type"] = product_type
-    if start_date: params["start_date"] = start_date
-    if end_date: params["end_date"] = end_date
-    try:
-        r = requests.get(f"{BASE_URL}/api/sales/history/export", params=params, headers=_headers(auth), timeout=15)
-        r.raise_for_status()
-        return r.text
-    except Exception as ex:
-        raise Exception(f"Export failed: {ex}")
 
 def history_page(page: ft.Page, auth: dict):
     page.title = "Transaction History"
@@ -48,40 +20,125 @@ def history_page(page: ft.Page, auth: dict):
     transactions_text = ft.Text(str(cache.get("total_count", 0)) if cache else "0", size=20, weight=ft.FontWeight.BOLD, color="#1565C0")
     
     cached_sales = cache.get("sales", [])
-    fuel_sales_text = ft.Text(str(sum(1 for s in cached_sales if s.get("product_type")=="fuel")), size=20, weight=ft.FontWeight.BOLD, color="#C62828")
-    oil_sales_text = ft.Text(str(sum(1 for s in cached_sales if s.get("product_type")=="oil")), size=20, weight=ft.FontWeight.BOLD, color="#6A1B9A")
 
-    search_field = ft.TextField(
-        hint_text="Search", filled=True, fill_color="white", border_radius=6, 
-        border_color="#CCCCCC", focused_border_color=DARK_RED, height=42, width=160, 
-        text_style=ft.TextStyle(size=13), content_padding=ft.Padding.symmetric(horizontal=12, vertical=8)
-    )
-    type_dropdown = ft.Dropdown(
+    fuel_count_init = sum(1 if s.get("product_type") == "fuel" else str(s.get("product_name", "")).count("L)") for s in cached_sales)
+    oil_count_init  = sum(1 if s.get("product_type") == "oil" else str(s.get("product_name", "")).count("pcs)") for s in cached_sales)
+
+    fuel_sales_text = ft.Text(str(fuel_count_init), size=20, weight=ft.FontWeight.BOLD, color="#C62828")
+    oil_sales_text  = ft.Text(str(oil_count_init), size=20, weight=ft.FontWeight.BOLD, color="#6A1B9A")
+
+    pagination_state = {
+        "current_page": 1,
+        "page_size": 50,
+        "total_count": cache.get("total_count", 0)
+    }
+
+    type_dropdown = ft.DropdownM2(
         label="Type", value="all", filled=True, fill_color="white", border_radius=6, 
         border_color="#CCCCCC", focused_border_color=DARK_RED, width=110, 
-        options=[ft.dropdown.Option("all","All"), ft.dropdown.Option("fuel","Fuel"), ft.dropdown.Option("oil","Oils")]
+        options=[ft.dropdownm2.Option("all","All"), ft.dropdownm2.Option("fuel","Fuel"), ft.dropdownm2.Option("oil","Oils")]
     )
-    attendant_dropdown = ft.Dropdown(
+
+    known_attendants = set(s.get("attendant_name") for s in cached_sales if s.get("attendant_name"))
+
+    attendant_dropdown = ft.DropdownM2(
         label="Attendant", value="all", filled=True, fill_color="white", border_radius=6, 
-        border_color="#CCCCCC", focused_border_color=DARK_RED, width=160, 
-        options=[
-            ft.dropdown.Option("all","All Attendants"), ft.dropdown.Option("Attendant 1","Pump Attendant 1"), 
-            ft.dropdown.Option("Attendant 2","Pump Attendant 2"), ft.dropdown.Option("Attendant 3","Pump Attendant 3"),
-        ]
+        border_color="#CCCCCC", focused_border_color=DARK_RED, width=180, 
+        options=[ft.dropdownm2.Option("all", "All Attendants")]
     )
+
+    known_fuel_products = {s.get("product_name") for s in cached_sales if s.get("product_type") == "fuel" and s.get("product_name")}
+    known_oil_products  = {s.get("product_name") for s in cached_sales if s.get("product_type") == "oil" and s.get("product_name")}
+    last_loaded_sales = {"data": cached_sales}
+
+    product_dropdown = ft.DropdownM2(
+        label="Product", value="all", filled=True, fill_color="white", border_radius=6,
+        border_color="#CCCCCC", focused_border_color=DARK_RED, width=160,
+        options=[ft.dropdownm2.Option("all", "All Products")]
+    )
+
+    page_info_text = ft.Text("Page 1", size=13, weight=ft.FontWeight.BOLD, color="#555555")
+    prev_btn = ft.IconButton(icon=ft.Icons.CHEVRON_LEFT, icon_color=DARK_RED, tooltip="Previous Page")
+    next_btn = ft.IconButton(icon=ft.Icons.CHEVRON_RIGHT, icon_color=DARK_RED, tooltip="Next Page")
+
+    def is_mounted(control):
+        try:
+            return control.page is not None
+        except (RuntimeError, AttributeError):
+            return False
+
+    def safe_ui_refresh(*controls):
+        for c in controls:
+            try:
+                if is_mounted(c):
+                    c.update()
+            except Exception as ue:
+                print(f"[history] control update failed: {ue}")
+
+    def refresh_attendants(sales_list: list):
+        new_names = {s.get("attendant_name") for s in sales_list if s.get("attendant_name")}
+        
+        if new_names - known_attendants or len(attendant_dropdown.options) == 1:
+            known_attendants.update(new_names)
+            curr_val = attendant_dropdown.value
+            
+            opts = [ft.dropdownm2.Option("all", "All Attendants")]
+            for name in sorted(known_attendants):
+                opts.append(ft.dropdownm2.Option(name, name))
+            
+            attendant_dropdown.options = opts
+            attendant_dropdown.value = curr_val if curr_val in [o.key for o in opts] else "all"
+            safe_ui_refresh(attendant_dropdown)
+
+    def rebuild_product_options():
+        t = type_dropdown.value
+        if t == "fuel":
+            names = known_fuel_products
+        elif t == "oil":
+            names = known_oil_products
+        else:
+            names = known_fuel_products | known_oil_products
+
+        curr_val = product_dropdown.value
+        opts = [ft.dropdownm2.Option("all", "All Products")]
+        opts += [ft.dropdownm2.Option(n, n) for n in sorted(names)]
+        product_dropdown.options = opts
+        product_dropdown.value = curr_val if curr_val in [o.key for o in opts] else "all"
+        safe_ui_refresh(product_dropdown)
+
+    def refresh_products(sales_list: list):
+        known_fuel_products.update(
+            s.get("product_name") for s in sales_list if s.get("product_type") == "fuel" and s.get("product_name")
+        )
+        known_oil_products.update(
+            s.get("product_name") for s in sales_list if s.get("product_type") == "oil" and s.get("product_name")
+        )
+        rebuild_product_options()
+
+    def apply_product_filter(sales: list):
+        if product_dropdown.value and product_dropdown.value != "all":
+            return [s for s in sales if product_dropdown.value in s.get("product_name", "")]
+        return sales
+
+    refresh_attendants(cached_sales)
+    refresh_products(cached_sales)
 
     def handle_from_date_change(e):
         if from_datepicker.value:
             val = from_datepicker.value
             from_date.value = val.strftime("%Y-%m-%d") if isinstance(val, (datetime, date)) else str(val)[:10]
-            from_date.update()
+            period_dropdown.value = "all"
+            pagination_state["current_page"] = 1
+            safe_ui_refresh(period_dropdown, from_date)
             load_data()
 
     def handle_to_date_change(e):
         if to_datepicker.value:
             val = to_datepicker.value
             to_date.value = val.strftime("%Y-%m-%d") if isinstance(val, (datetime, date)) else str(val)[:10]
-            to_date.update()
+            period_dropdown.value = "all"
+            pagination_state["current_page"] = 1
+            safe_ui_refresh(period_dropdown, to_date)
             load_data()
 
     from_datepicker = ft.DatePicker(on_change=handle_from_date_change)
@@ -96,32 +153,127 @@ def history_page(page: ft.Page, auth: dict):
         to_datepicker.open = True
         page.update()
 
+    def clear_from_date(e):
+        from_date.value = ""
+        from_datepicker.value = None
+        period_dropdown.value = "all"
+        pagination_state["current_page"] = 1
+        safe_ui_refresh(period_dropdown, from_date)
+        load_data()
+
+    def clear_to_date(e):
+        to_date.value = ""
+        to_datepicker.value = None
+        period_dropdown.value = "all"
+        pagination_state["current_page"] = 1
+        safe_ui_refresh(period_dropdown, to_date)
+        load_data()
+
+    def handle_period_change(e):
+        today = date.today()
+        if period_dropdown.value == "daily":
+            from_date.value = today.strftime("%Y-%m-%d")
+            to_date.value = today.strftime("%Y-%m-%d")
+        elif period_dropdown.value == "weekly":
+            start_d = today - timedelta(days=6)
+            from_date.value = start_d.strftime("%Y-%m-%d")
+            to_date.value = today.strftime("%Y-%m-%d")
+        elif period_dropdown.value == "monthly":
+            start_d = today.replace(day=1)
+            from_date.value = start_d.strftime("%Y-%m-%d")
+            to_date.value = today.strftime("%Y-%m-%d")
+        elif period_dropdown.value == "all":
+            from_date.value = ""
+            to_date.value = ""
+            from_datepicker.value = None
+            to_datepicker.value = None
+
+        pagination_state["current_page"] = 1
+        safe_ui_refresh(from_date, to_date)
+        load_data()
+
+    period_dropdown = ft.DropdownM2(
+        label="Period", value="all", filled=True, fill_color="white", border_radius=6, 
+        border_color="#CCCCCC", focused_border_color=DARK_RED, width=130, 
+        options=[
+            ft.dropdownm2.Option("all","All"),
+            ft.dropdownm2.Option("daily","Daily"), 
+            ft.dropdownm2.Option("weekly","Weekly"), 
+            ft.dropdownm2.Option("monthly","Monthly")
+        ],
+        on_change=handle_period_change
+    )
+
     from_date = ft.TextField(
         label="From Date", hint_text="Select date", read_only=True, filled=True, fill_color="white", 
-        border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED, width=150, 
+        border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED, width=170, 
         text_style=ft.TextStyle(size=13),
-        suffix=ft.IconButton(icon=ft.Icons.CALENDAR_MONTH, icon_size=18, icon_color=DARK_RED, on_click=open_from_picker, tooltip="Select From Date"),
+        suffix=ft.Row(
+            controls=[
+                ft.IconButton(icon=ft.Icons.CLEAR, icon_size=16, icon_color="#888888", on_click=clear_from_date, tooltip="Clear From Date"),
+                ft.IconButton(icon=ft.Icons.CALENDAR_MONTH, icon_size=18, icon_color=DARK_RED, on_click=open_from_picker, tooltip="Select From Date"),
+            ],
+            tight=True,
+            spacing=0,
+        ),
         on_click=open_from_picker
     )
     to_date = ft.TextField(
         label="To Date", hint_text="Select date", read_only=True, filled=True, fill_color="white", 
-        border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED, width=150, 
+        border_radius=6, border_color="#CCCCCC", focused_border_color=DARK_RED, width=170, 
         text_style=ft.TextStyle(size=13),
-        suffix=ft.IconButton(icon=ft.Icons.CALENDAR_MONTH, icon_size=18, icon_color=DARK_RED, on_click=open_to_picker, tooltip="Select To Date"),
+        suffix=ft.Row(
+            controls=[
+                ft.IconButton(icon=ft.Icons.CLEAR, icon_size=16, icon_color="#888888", on_click=clear_to_date, tooltip="Clear To Date"),
+                ft.IconButton(icon=ft.Icons.CALENDAR_MONTH, icon_size=18, icon_color=DARK_RED, on_click=open_to_picker, tooltip="Select To Date"),
+            ],
+            tight=True,
+            spacing=0,
+        ),
         on_click=open_to_picker
     )
 
     columns = ["Attendant", "Date & Time", "Type", "Item", "Pump", "Quantity", "Amount", "Paid", "Change", "Payment", "Recorded By"]
-    col_widths = [130, 160, 80, 120, 80, 80, 90, 90, 90, 80, 100]
+    col_widths = [120, 150, 80, 240, 70, 75, 85, 85, 85, 75, 95]
 
     def header_cell(text, width): 
         return ft.Container(content=ft.Text(text, size=12, color="#555555", weight=ft.FontWeight.W_600), width=width, padding=ft.Padding.symmetric(horizontal=8, vertical=10))
+    
     def data_cell(text, width, bold=False, color="#111111"): 
         return ft.Container(content=ft.Text(text, size=12, color=color, weight=ft.FontWeight.BOLD if bold else ft.FontWeight.NORMAL, overflow=ft.TextOverflow.ELLIPSIS), width=width, padding=ft.Padding.symmetric(horizontal=8, vertical=12))
+
+    def item_cell(text, width):
+        return ft.Container(
+            width=width,
+            padding=ft.Padding.symmetric(horizontal=8, vertical=8),
+            alignment=ft.Alignment(-1, 0),
+            content=ft.Row(
+                scroll=ft.ScrollMode.AUTO,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Text(text, size=12, color="#111111", no_wrap=True)
+                ]
+            )
+        )
+
     def fuel_badge(label: str):
-        bg = "#C62828" if label=="fuel" else "#6A1B9A"
-        icon = ft.Icons.LOCAL_GAS_STATION if label=="fuel" else ft.Icons.SHOPPING_CART
-        return ft.Container(content=ft.Row(controls=[ft.Icon(icon, size=12, color="white"), ft.Text(label, size=11, color="white", weight=ft.FontWeight.BOLD)], spacing=4, tight=True), bgcolor=bg, border_radius=12, padding=ft.Padding.symmetric(horizontal=10, vertical=4))
+        lbl = str(label or "fuel").lower()
+        bg = "#C62828" if lbl == "fuel" else "#6A1B9A" if lbl == "oil" else "#0F3057"
+        icon = (
+            ft.Icons.LOCAL_GAS_STATION if lbl == "fuel" 
+            else ft.Icons.WATER_DROP if lbl == "oil" 
+            else ft.Icons.SHOPPING_CART
+        )
+        return ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(icon, size=12, color="white"), 
+                    ft.Text(lbl, size=11, color="white", weight=ft.FontWeight.BOLD)
+                ], 
+                spacing=4, tight=True
+            ), 
+            bgcolor=bg, border_radius=12, padding=ft.Padding.symmetric(horizontal=8, vertical=4)
+        )
 
     table_header = ft.Container(content=ft.Row(controls=[header_cell(col, col_widths[i]) for i, col in enumerate(columns)], spacing=0), border=ft.Border.only(bottom=ft.BorderSide(1, "#E0E0E0")))
     
@@ -159,20 +311,22 @@ def history_page(page: ft.Page, auth: dict):
 
         rows = []
         for i, s in enumerate(sales):
-            try: dt_str = datetime.fromisoformat(s["sold_at"].replace("Z","+00:00")).strftime("%b %d, %Y, %I:%M %p")
-            except: dt_str = s.get("sold_at","")[:16]
+            try: dt_str = datetime.fromisoformat(str(s.get("sold_at","")).replace("Z","+00:00")).strftime("%b %d, %Y, %I:%M %p")
+            except: dt_str = str(s.get("sold_at",""))[:16]
 
-            paid = s.get("paid_amount", s.get("amount_paid", s.get("cash_given", s.get("cash", 0))))
-            change = s.get("change_amount", s.get("change", s.get("change_given", 0)))
+            total_amt = float(s.get("total_amount") or 0.0)
+            qty_val   = float(s.get("quantity") or 0.0)
+            paid      = float(s.get("paid_amount") or s.get("amount_paid") or s.get("cash_given") or s.get("cash") or total_amt)
+            change    = float(s.get("change_amount") or s.get("change") or s.get("change_given") or 0.0)
 
             row = ft.Container(
                 content=ft.Row(controls=[
-                    data_cell(s.get("attendant_name",""), col_widths[0]), data_cell(dt_str, col_widths[1]),
+                    data_cell(s.get("attendant_name","Unknown"), col_widths[0]), data_cell(dt_str, col_widths[1]),
                     ft.Container(content=fuel_badge(s.get("product_type","")), width=col_widths[2], padding=ft.Padding.symmetric(horizontal=8, vertical=8)),
-                    data_cell(s.get("product_name",""), col_widths[3]), data_cell(s.get("pump_name","-"), col_widths[4]),
-                    data_cell(f"{s.get('quantity',0):.1f}{s.get('unit','')}", col_widths[5]), data_cell(f"₱{s.get('total_amount',0):.2f}", col_widths[6], bold=True, color=DARK_RED),
+                    item_cell(s.get("product_name",""), col_widths[3]), data_cell(s.get("pump_name","-"), col_widths[4]),
+                    data_cell(f"{qty_val:.1f}{s.get('unit','')}", col_widths[5]), data_cell(f"₱{total_amt:.2f}", col_widths[6], bold=True, color=DARK_RED),
                     data_cell(f"₱{paid:.2f}", col_widths[7], bold=True), data_cell(f"₱{change:.2f}", col_widths[8], color="#2E7D32"),
-                    data_cell(s.get("payment_method",""), col_widths[9]), data_cell(s.get("recorded_by",""), col_widths[10]),
+                    data_cell(s.get("payment_method","cash"), col_widths[9]), data_cell(s.get("recorded_by","Admin"), col_widths[10]),
                 ], spacing=0), bgcolor="#FAFAFA" if i%2==0 else "white", border=ft.Border.only(bottom=ft.BorderSide(1, "#F0F0F0")),
             )
             rows.append(row)
@@ -190,8 +344,21 @@ def history_page(page: ft.Page, auth: dict):
     table_column = ft.Column(controls=initial_controls, spacing=0, scroll=ft.ScrollMode.ADAPTIVE)
 
     def load_data():
+        if is_mounted(table_column):
+            table_column.controls = [
+                table_header, 
+                ft.Container(
+                    padding=20, 
+                    content=ft.Row([
+                        ft.ProgressRing(width=16, height=16, color=DARK_RED), 
+                        ft.Text("Updating transactions...", size=13, color="#777777")
+                    ], spacing=10)
+                )
+            ]
+            safe_ui_refresh(table_column)
+
         def bg():
-            time.sleep(0.1)
+            time.sleep(0.05)
             sd = from_date.value.strip() if from_date.value else None
             ed = to_date.value.strip() if to_date.value else None
             try: 
@@ -201,33 +368,102 @@ def history_page(page: ft.Page, auth: dict):
                 if ed: date.fromisoformat(ed)
             except: ed = None
 
-            data = get_unified_history(auth, product_type=type_dropdown.value, attendant_name=attendant_dropdown.value, start_date=sd, end_date=ed, page=1, page_size=200)
-            
-            auth["history_cache"] = data
-            
-            total_sales_text.value = f"₱{data.get('total_amount',0):,.2f}"
-            transactions_text.value = str(data.get("total_count",0))
-            
-            sales = data.get("sales",[])
-            fuel_sales_text.value = str(sum(1 for s in sales if s.get("product_type")=="fuel"))
-            oil_sales_text.value = str(sum(1 for s in sales if s.get("product_type")=="oil"))
+            ptype = type_dropdown.value if type_dropdown.value != "all" else None
+            att_name = attendant_dropdown.value if attendant_dropdown.value != "all" else None
 
-            table_column.controls = [table_header] + build_rows(sales, search_field.value or "")
-            try: page.update()
-            except: pass
+            try:
+                data = get_unified_history(
+                    auth, 
+                    product_type=ptype, 
+                    attendant_name=att_name, 
+                    start_date=sd, 
+                    end_date=ed, 
+                    page=pagination_state["current_page"], 
+                    page_size=pagination_state["page_size"]
+                )
             
+                auth["history_cache"] = data
+
+                total_sales_text.value = f"₱{float(data.get('total_amount',0) or 0):,.2f}"
+                total_cnt = int(data.get("total_count",0) or 0)
+                transactions_text.value = str(total_cnt)
+                pagination_state["total_count"] = total_cnt
+
+                sales = data.get("sales",[]) or []
+
+                fuel_sales_text.value = str(data.get("total_fuel_count", 0))
+                oil_sales_text.value  = str(data.get("total_oil_count", 0))
+
+                refresh_attendants(sales)
+                refresh_products(sales)
+                last_loaded_sales["data"] = sales
+
+                table_column.controls = [table_header] + build_rows(apply_product_filter(sales))
+                
+                max_pages = max(1, (total_cnt + pagination_state["page_size"] - 1) // pagination_state["page_size"])
+                page_info_text.value = f"Page {pagination_state['current_page']} of {max_pages}"
+                prev_btn.disabled = (pagination_state["current_page"] <= 1)
+                next_btn.disabled = (pagination_state["current_page"] >= max_pages)
+
+                safe_ui_refresh(
+                    total_sales_text, 
+                    transactions_text, 
+                    fuel_sales_text, 
+                    oil_sales_text, 
+                    table_column,
+                    page_info_text,
+                    prev_btn,
+                    next_btn
+                )
+            except Exception as ex:
+                print(f"[history] load_data error: {ex}")
+                table_column.controls = [
+                    table_header, 
+                    ft.Container(padding=20, content=ft.Text(f"Failed to load transactions: {ex}", size=13, color="#C62828"))
+                ]
+                safe_ui_refresh(table_column)
+
         page.run_thread(bg)
 
-    search_field.on_change = lambda e: load_data()
-    type_dropdown.on_change = lambda e: load_data()
-    attendant_dropdown.on_change = lambda e: load_data()
+    def on_prev_page(e):
+        if pagination_state["current_page"] > 1:
+            pagination_state["current_page"] -= 1
+            load_data()
+
+    def on_next_page(e):
+        max_pages = max(1, (pagination_state["total_count"] + pagination_state["page_size"] - 1) // pagination_state["page_size"])
+        if pagination_state["current_page"] < max_pages:
+            pagination_state["current_page"] += 1
+            load_data()
+
+    prev_btn.on_click = on_prev_page
+    next_btn.on_click = on_next_page
+
+    def handle_type_change(e):
+        pagination_state["current_page"] = 1
+        rebuild_product_options()
+        load_data()
+
+    def handle_product_change(e):
+        filtered = apply_product_filter(last_loaded_sales["data"])
+        table_column.controls = [table_header] + build_rows(filtered)
+        safe_ui_refresh(table_column)
+
+    def handle_attendant_change(e):
+        pagination_state["current_page"] = 1
+        load_data()
+
+    type_dropdown.on_change = handle_type_change
+    product_dropdown.on_change = handle_product_change
+    attendant_dropdown.on_change = handle_attendant_change
 
     def do_export(e):
         def bg():
-            time.sleep(0.1)
+            time.sleep(0.05)
             try:
                 sd, ed = from_date.value.strip() if from_date.value else None, to_date.value.strip() if to_date.value else None
-                csv_text = export_history_csv(auth, product_type=type_dropdown.value, start_date=sd, end_date=ed)
+                ptype = type_dropdown.value if type_dropdown.value != "all" else None
+                csv_text = export_history_csv(auth, product_type=ptype, start_date=sd, end_date=ed)
                 downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
                 os.makedirs(downloads_dir, exist_ok=True)
                 filename = f"sales_{sd or 'all'}_{ed or 'all'}.csv"
@@ -244,15 +480,36 @@ def history_page(page: ft.Page, auth: dict):
         make_summary_card("Total Sales", total_sales_text, ft.Icons.TRENDING_UP, "#4CAF50"),
         make_summary_card("Transactions", transactions_text, ft.Icons.LIST_ALT, "#1565C0"),
         make_summary_card("Fuel Sales", fuel_sales_text, ft.Icons.LOCAL_GAS_STATION, "#C62828"),
-        make_summary_card("Oil Sales", oil_sales_text, ft.Icons.SHOPPING_CART, "#6A1B9A"),
+        make_summary_card("Oil Sales", oil_sales_text, ft.Icons.WATER_DROP, "#6A1B9A"),
     ], spacing=12)
 
     filters_section = ft.Container(
-        content=ft.Column(controls=[ft.Text("Filters", size=14, weight=ft.FontWeight.BOLD, color="#222222"), ft.Container(height=8), ft.Row(controls=[search_field, type_dropdown, attendant_dropdown, from_date, to_date], spacing=12, wrap=True)], spacing=0, tight=True),
+        content=ft.Column(controls=[
+            ft.Text("Filters", size=14, weight=ft.FontWeight.BOLD, color="#222222"), 
+            ft.Container(height=8), 
+            ft.Row(controls=[type_dropdown, product_dropdown, attendant_dropdown, period_dropdown, from_date, to_date], spacing=12, wrap=True)
+        ], spacing=0, tight=True),
         bgcolor="white", border_radius=8, padding=ft.Padding.symmetric(horizontal=20, vertical=16), shadow=ft.BoxShadow(blur_radius=4, color="#00000015", offset=ft.Offset(0, 2)),
     )
 
-    table_section = ft.Container(content=table_column, bgcolor="white", border_radius=8, shadow=ft.BoxShadow(blur_radius=4, color="#00000015", offset=ft.Offset(0, 2)), clip_behavior=ft.ClipBehavior.HARD_EDGE, expand=True)
+    pagination_row = ft.Container(
+        content=ft.Row(
+            controls=[
+                ft.Text("Page Size: 50", size=12, color="#777777"),
+                ft.Row([prev_btn, page_info_text, next_btn], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        ),
+        padding=ft.Padding.symmetric(horizontal=16, vertical=8)
+    )
+
+    table_section = ft.Container(
+        content=ft.Column([table_column, pagination_row], spacing=0), 
+        bgcolor="white", border_radius=8, 
+        shadow=ft.BoxShadow(blur_radius=4, color="#00000015", offset=ft.Offset(0, 2)), 
+        clip_behavior=ft.ClipBehavior.HARD_EDGE, 
+        expand=True
+    )
 
     header = ft.Container(
         content=ft.Row([
