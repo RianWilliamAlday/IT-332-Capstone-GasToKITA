@@ -1,6 +1,6 @@
 import os, requests, pathlib
 
-BASE_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+BASE_URL = "http://127.0.0.1:8000"
 
 PUMP_MAP = {"Regular 1":1,"Regular 2":2,"Premium 1":3,"Premium 2":4,"Diesel 1":5,"Diesel 2":6}
 DEFAULT_ATTENDANTS = ["Attendant 1", "Attendant 2", "Attendant 3"]
@@ -189,3 +189,40 @@ def manual_confirm_gcash(auth: dict, sale_id: int, product_type: str = "fuel", g
         except: detail = r.text
         raise Exception(detail or f"Manual confirm failed {r.status_code}")
     return r.json()
+
+def get_unified_history(auth: dict, product_type=None, attendant_name=None, start_date=None, end_date=None, page=1, page_size=100):
+    params = {"page": page, "page_size": page_size}
+    if product_type and product_type != "all": params["product_type"] = product_type
+    if attendant_name and attendant_name != "all": params["attendant_name"] = attendant_name
+    if start_date: params["start_date"] = start_date
+    if end_date: params["end_date"] = end_date
+    r = requests.get(f"{BASE_URL}/api/sales/history", params=params, headers=_headers(auth), timeout=8)
+    r.raise_for_status()
+    return r.json()
+
+def get_cashier_history(auth: dict, cashier_id: int, product_type=None, attendant_name=None, start_date=None, end_date=None, payment_method=None, page=1, page_size=50):
+    """GET /api/employees/{cashier_id}/history - history limited to one cashier account."""
+    params = {"page": page, "page_size": page_size}
+    if product_type and product_type != "all": params["product_type"] = product_type
+    if attendant_name and attendant_name != "all": params["attendant_name"] = attendant_name
+    if payment_method: params["payment_method"] = payment_method
+    if start_date: params["start_date"] = start_date
+    if end_date: params["end_date"] = end_date
+    r = requests.get(f"{BASE_URL}/api/employees/{cashier_id}/history", params=params, headers=_headers(auth), timeout=8)
+    if r.status_code >= 400:
+        try: detail = r.json().get("detail")
+        except: detail = r.text
+        raise Exception(detail or f"Failed to fetch cashier history ({r.status_code})")
+    return r.json()
+
+def export_history_csv(auth: dict, product_type=None, start_date=None, end_date=None):
+    params = {}
+    if product_type and product_type != "all": params["product_type"] = product_type
+    if start_date: params["start_date"] = start_date
+    if end_date: params["end_date"] = end_date
+    try:
+        r = requests.get(f"{BASE_URL}/api/sales/history/export", params=params, headers=_headers(auth), timeout=15)
+        r.raise_for_status()
+        return r.text
+    except Exception as ex:
+        raise Exception(f"Export failed: {ex}")

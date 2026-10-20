@@ -1,5 +1,6 @@
 import flet as ft
-from pages.api_client import create_fuel_sale, create_oil_sale
+from pages.api_client_m import create_fuel_sale, create_oil_sale, submit_multi_sale
+from pages.sidebar_m import Sidebar
 
 MOBILE_RED = "#8B0000"
 GREEN_COLOR = "#118C4F"
@@ -12,6 +13,8 @@ def build_pos_page_mobile(page: ft.Page, auth: dict, transaction: dict = None):
     page.window.height = 844
     page.window.resizable = False
 
+    sidebar = Sidebar(page, auth, active="pos")
+
     total_due = float(transaction.get("total", 0)) if transaction else 0
     label = transaction.get("label", "") if transaction else ""
     details = transaction.get("details", "") if transaction else ""
@@ -20,9 +23,7 @@ def build_pos_page_mobile(page: ft.Page, auth: dict, transaction: dict = None):
     paid = {"value": 0.0}
 
     def show_snack(message, bgcolor=None):
-        page.snack_bar = ft.SnackBar(content=ft.Text(message), bgcolor=bgcolor)
-        page.snack_bar.open = True
-        page.update()
+        page.show_dialog(ft.SnackBar(content=ft.Text(message), bgcolor=bgcolor))
 
     amount_field = ft.TextField(
         value="",
@@ -70,15 +71,9 @@ def build_pos_page_mobile(page: ft.Page, auth: dict, transaction: dict = None):
         refresh()
 
     def on_back(e):
-        if tx_type == "fuel":
-            from pages.select_gas_m import build_gas_page_mobile
-            page.controls.clear()
-            page.add(build_gas_page_mobile(page, auth))
-        else:
-            from pages.select_oil_m import build_oil_page_mobile
-            page.controls.clear()
-            page.add(build_oil_page_mobile(page, auth))
-        page.update()
+        from pages.select_multi_m import build_multi_page_mobile
+        page.controls.clear()
+        page.add(build_multi_page_mobile(page, auth))
 
     def create_btn(val):
         return ft.Container(
@@ -101,17 +96,28 @@ def build_pos_page_mobile(page: ft.Page, auth: dict, transaction: dict = None):
                 pump_id = transaction.get("pump_id", 1)
                 liters = transaction.get("liters", 0)
                 result = create_fuel_sale(auth, pump_id, liters, attendant, "cash", paid["value"])
-            else:
+            elif tx_type == "oil":
                 oil_id = transaction.get("oil_id")
                 qty = transaction.get("quantity", 1)
                 result = create_oil_sale(auth, oil_id, qty, attendant, "cash", paid["value"])
+            else:
+                result = submit_multi_sale(
+                    auth, attendant_name=attendant,
+                    payment_method="cash", amount_paid=paid["value"],
+                )
 
             auth.pop("fuels_data", None)
             auth.pop("oils_data", None)
 
+            cart = auth.get("cart") or {}
+            receipt_tx = dict(transaction)
+            receipt_tx["fuel_items"] = list(cart.get("fuel_items", []))
+            receipt_tx["oil_items"] = list(cart.get("oil_items", []))
+            auth["cart"] = {"fuel_items": [], "oil_items": []}
+
             from pages.change_m import build_change_page_mobile
             page.controls.clear()
-            page.add(build_change_page_mobile(page, auth, transaction, paid["value"], change, sale=result, tx_type=tx_type))
+            page.add(build_change_page_mobile(page, auth, receipt_tx, paid["value"], change, sale=result, tx_type=tx_type))
             page.update()
 
         except Exception as ex:
@@ -120,12 +126,19 @@ def build_pos_page_mobile(page: ft.Page, auth: dict, transaction: dict = None):
     header = ft.Container(
         content=ft.Row(
             controls=[
-                ft.Column(controls=[ft.Text("Pump", size=16, weight=ft.FontWeight.BOLD, color="white"), ft.Text("Attendant", size=16, weight=ft.FontWeight.BOLD, color="white")], spacing=0),
+                ft.Row(
+                    controls=[
+                        sidebar.menu_button(),
+                        ft.Column(controls=[ft.Text("Cashier", size=16, weight=ft.FontWeight.BOLD, color="white")], spacing=0),
+                    ],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
                 ft.Row(controls=[ft.Text("U-FUEL", size=16, weight=ft.FontWeight.BOLD, color="white"), ft.Container(content=ft.Image(src="u-fuel_logo.jpg", width=40, height=40, fit=ft.BoxFit.CONTAIN), bgcolor="white", border_radius=8, padding=4, width=40, height=40)], spacing=8),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         ),
-        padding=ft.Padding.symmetric(horizontal=20, vertical=14),
+        padding=ft.Padding.only(left=8, right=20, top=10, bottom=10),
     )
 
     keypad = ft.Column(
@@ -185,6 +198,6 @@ def build_pos_page_mobile(page: ft.Page, auth: dict, transaction: dict = None):
     footer = ft.Container(content=ft.Text("GAStoKITA", size=13, color="white", text_align=ft.TextAlign.CENTER), bgcolor=MOBILE_RED, padding=ft.Padding.symmetric(vertical=14), alignment=ft.Alignment.CENTER)
 
     return ft.SafeArea(
-        content=ft.Column(controls=[header, ft.Container(height=10), content_card, footer], expand=True, spacing=0),
+        content=sidebar.wrap(ft.Column(controls=[header, ft.Container(height=10), content_card, footer], expand=True, spacing=0)),
         expand=True,
     )
