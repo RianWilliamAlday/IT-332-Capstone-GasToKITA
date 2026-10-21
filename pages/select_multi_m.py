@@ -10,16 +10,67 @@ MOBILE_RED = "#8B0000"
 GREEN = "#2E7D32"
 YELLOW = "#F9A825"
 BAR_GREEN = "#12B347"
-BAR_YELLOW = "#F4B400"
-BAR_RED = "#E3242B"
-GCASH_BLUE = "#007CFF"
-GRAY_BG = "#F5F5F5"
 
-FALLBACK = {"Regular": 55.0, "Premium": 60.0, "Diesel": 50.0}
-GCASH_MIN = 100.0
+FALLBACK_PRICES = {
+    "Regular": 55.0,
+    "Premium": 60.0,
+    "Diesel": 50.0,
+}
 
 def generate_qr_base64(url: str):
-    """Base64 PNG of a QR code for `url`. Tries `qrcode` (needs Pillow), then pure-python `segno`."""
+    try:
+        import qrcode
+        qr = qrcode.QRCode(version=1, box_size=8, border=2)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception as ex:
+        print(f"[QR] Failed to generate QR: {ex}")
+        return None
+
+def create_fuel_card(title: str, price: float, percentage: float, on_click):
+    base = title.split()[0]
+    card_color = COLOR_REGULAR if "Regular" in base else COLOR_PREMIUM if "Premium" in base else COLOR_DIESEL
+
+    return ft.Container(
+        width=280, height=130, bgcolor=card_color, border_radius=18,
+        border=ft.Border.all(1, "black"), padding=15, ink=True,
+        on_click=lambda e: on_click(title, price, PUMP_MAP.get(title, 1)),
+        content=ft.Column(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            controls=[
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    controls=[
+                        ft.Text(title, size=16, weight=ft.FontWeight.BOLD, color="white"),
+                        ft.Text(f"₱{price:.2f}", size=12, color="white"),
+                    ]
+                ),
+                ft.Column(
+                    spacing=4,
+                    controls=[
+                        ft.Text(f"{percentage:.0f}%", size=20, weight=ft.FontWeight.BOLD, color="white"),
+                        ft.Stack(
+                            controls=[
+                                ft.Container(height=14, width=185, bgcolor="white", border_radius=10),
+                                ft.Container(
+                                    height=14, 
+                                    width=max(0, min(185, 185 * (percentage / 100))), 
+                                    bgcolor=BAR_GREEN, 
+                                    border_radius=10
+                                )
+                            ]
+                        )
+                    ]
+                )
+            ]
+        )
+    )
+
+def generate_qr_base64(url: str):
     if not url:
         return None
     try:
@@ -43,13 +94,55 @@ def generate_qr_base64(url: str):
         return None
 
 
-def build_multi_page_mobile(page: ft.Page, auth: dict):
+def create_oil_card(oil: dict, on_click):
+    brand = oil.get("brand", "")
+    name = oil.get("name", "")
+    stock = oil.get("stock", 0)
+    price = oil.get("price", 0.0)
+    low = stock <= oil.get("low_stock_threshold", 5)
+    card_bg = RED if low else WHITE
+    text_main = WHITE if low else "#2B2D36"
+    text_sub = "#FFD9DA" if low else "#5F6368"
+    divider_color = "#E58A8D" if low else "#E5E7EB"
+
+    def info_row(label, value):
+        return ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN, spacing=8,
+            controls=[
+                ft.Text(label, size=13, weight=ft.FontWeight.W_500, color=text_sub),
+                ft.Text(value, size=13, weight=ft.FontWeight.W_600, color=text_main,
+                        expand=True, text_align=ft.TextAlign.RIGHT,
+                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+            ],
+        )
+
+    return ft.Container(
+        width=280,
+        bgcolor=card_bg,
+        border_radius=20,
+        padding=14,
+        border=ft.Border.all(1, RED if low else "#E5E7EB"),
+        shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.with_opacity(0.10, "black"), offset=ft.Offset(0, 4)),
+        on_click=lambda e: on_click(oil),
+        ink=True,
+        content=ft.Column(
+            spacing=8,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                oil_card_image(oil, 150),
+                ft.Text(f"Stock: {stock}", size=22, weight=ft.FontWeight.BOLD, color=text_main),
+                ft.Text(f"\u20b1{price:.2f}", size=17, weight=ft.FontWeight.W_600, color=text_main),
+                ft.Divider(height=1, color=divider_color),
+                info_row("Brand:", brand),
+                info_row("Item:", name),
+            ],
+        ),
+    )
+
+def build_multi_page(page: ft.Page, auth: dict):
     page.title = "Multi Sale"
-    page.bgcolor = MOBILE_RED
+    page.bgcolor = LIGHT_GRAY
     page.padding = 0
-    page.window.width = 390
-    page.window.height = 844
-    page.window.resizable = False
 
     sidebar = Sidebar(page, auth, active="pos")
 
@@ -61,24 +154,6 @@ def build_multi_page_mobile(page: ft.Page, auth: dict):
 
     def show_snack(msg, color=MOBILE_RED):
         page.show_dialog(ft.SnackBar(content=ft.Text(msg), bgcolor=color))
-
-    def cart_total():
-        return sum(i["total"] for i in cart["fuel_items"]) + sum(i["total"] for i in cart["oil_items"])
-
-    def cart_count():
-        return len(cart["fuel_items"]) + len(cart["oil_items"])
-
-    def loading_indicator():
-        return ft.Container(
-            content=ft.ProgressRing(color=MOBILE_RED, width=40, height=40, stroke_width=4),
-            alignment=ft.Alignment.CENTER,
-            expand=True,
-        )
-
-    def bar_color(pct):
-        if pct > 60: return BAR_GREEN
-        if pct > 25: return BAR_YELLOW
-        return BAR_RED
 
     def go_back(e):
         auth["cart"] = {"fuel_items": [], "oil_items": []}
@@ -111,40 +186,54 @@ def build_multi_page_mobile(page: ft.Page, auth: dict):
 
     def refresh_cart_ui():
         cart_items_column.controls.clear()
+        grand_total = 0.0
 
         for idx, item in enumerate(cart["fuel_items"]):
+            grand_total += item["total"]
             def remove_fuel(e, i=idx):
                 cart["fuel_items"].pop(i)
                 refresh_cart_ui()
+
             unit_p = item.get("unit_price") or (item["total"] / item["liters_sold"] if item["liters_sold"] else 0)
-            cart_items_column.controls.append(cart_row(
-                f"Fuel: {item['fuel_name']}",
-                f"{item['liters_sold']:.3f}L x ₱{unit_p:.2f}  =  ₱{item['total']:.2f}",
-                remove_fuel,
-            ))
+            cart_items_column.controls.append(
+                ft.Container(
+                    bgcolor="#F5F5F5", border_radius=8, padding=10,
+                    content=ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        controls=[
+                            ft.Column(spacing=2, controls=[
+                                ft.Text(f"Fuel: {item['fuel_name']}", weight=ft.FontWeight.BOLD, size=13),
+                                ft.Text(f"{item['liters_sold']:.3f}L x ₱{unit_p:.2f}", size=11, color="grey"),
+                            ]),
+                            ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_color="red", icon_size=18, on_click=remove_fuel)
+                        ]
+                    )
+                )
+            )
 
         for idx, item in enumerate(cart["oil_items"]):
+            grand_total += item["total"]
             def remove_oil(e, i=idx):
                 cart["oil_items"].pop(i)
                 refresh_cart_ui()
-            cart_items_column.controls.append(cart_row(
-                item["oil_name"],
-                f"{item['quantity']} x ₱{item['price']:.2f}  =  ₱{item['total']:.2f}",
-                remove_oil,
-            ))
 
-        if not cart_items_column.controls:
             cart_items_column.controls.append(
-                ft.Container(content=ft.Text("Cart is empty", color="grey"), alignment=ft.Alignment.CENTER, padding=20)
+                ft.Container(
+                    bgcolor="#F5F5F5", border_radius=8, padding=10,
+                    content=ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        controls=[
+                            ft.Column(spacing=2, controls=[
+                                ft.Text(item['oil_name'], weight=ft.FontWeight.BOLD, size=13),
+                                ft.Text(f"{item['quantity']} x ₱{item['price']:.2f}", size=11, color="grey"),
+                            ]),
+                            ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_color="red", icon_size=18, on_click=remove_oil)
+                        ]
+                    )
+                )
             )
 
-        total = cart_total()
-        n = cart_count()
-        cart_items_column.height = min(max(n * 64, 70), 300)
-        sheet_total_text.value = f"₱{total:.2f}"
-        badge_text.value = str(n) if n < 100 else "99+"
-        cart_badge.visible = n > 0
-        toggle_holder.content = build_toggle()
+        total_text.value = f"₱{grand_total:.2f}"
         page.update()
 
     def proceed_checkout(e):
@@ -394,34 +483,20 @@ def build_multi_page_mobile(page: ft.Page, auth: dict):
         lock = {"busy": False}
         liters_field = ft.TextField(label="Liters", keyboard_type=ft.KeyboardType.NUMBER, autofocus=True)
         amount_field = ft.TextField(label="Amount (PHP)", keyboard_type=ft.KeyboardType.NUMBER)
-        error_text = ft.Text("", color="red", size=12)
 
         def on_liters(e):
-            if lock["busy"]: return
-            lock["busy"] = True
             try:
                 l = float(liters_field.value or 0)
                 amount_field.value = f"{l * price:.2f}" if l > 0 else ""
-                error_text.value = f"Only {stock:.1f}L left" if l > stock else ""
                 page.update()
-            except ValueError:
-                pass
-            finally:
-                lock["busy"] = False
+            except: pass
 
         def on_amount(e):
-            if lock["busy"]: return
-            lock["busy"] = True
             try:
                 a = float(amount_field.value or 0)
-                l = a / price if price else 0
-                liters_field.value = f"{l:.3f}" if a > 0 else ""
-                error_text.value = f"Only {stock:.1f}L left" if l > stock else ""
+                liters_field.value = f"{a / price:.3f}" if a > 0 and price else ""
                 page.update()
-            except ValueError:
-                pass
-            finally:
-                lock["busy"] = False
+            except: pass
 
         liters_field.on_change = on_liters
         amount_field.on_change = on_amount
@@ -430,75 +505,56 @@ def build_multi_page_mobile(page: ft.Page, auth: dict):
             try:
                 l = float(liters_field.value or 0)
                 a = float(amount_field.value or 0)
-                if l <= 0 and a <= 0:
-                    error_text.value = "Enter liters or amount"; page.update(); return
-                if l <= 0: l = a / price
-                if a <= 0: a = l * price
-                if l > stock:
-                    error_text.value = f"Insufficient {stock:.1f}L"; page.update(); return
-                cart["fuel_items"].append({
-                    "pump_id": pump_id, "liters_sold": round(l, 3), "fuel_name": fuel_clean_name,
-                    "unit_price": price, "total": round(a, 2),
-                })
-                page.pop_dialog()
-                refresh_cart_ui()
+                if l > 0 and a > 0:
+                    cart["fuel_items"].append({
+                        "pump_id": pump_id,
+                        "liters_sold": round(l, 3),
+                        "fuel_name": fuel_clean_name,
+                        "unit_price": price,
+                        "total": round(a, 2)
+                    })
+                    refresh_cart_ui()
+                    page.pop_dialog()
             except Exception as ex:
-                error_text.value = str(ex); page.update()
+                print(f"[Multi Fuel Add Error] {ex}")
 
-        page.show_dialog(ft.AlertDialog(
+        dlg = ft.AlertDialog(
             modal=True,
-            title=ft.Text(f"{pump_name} - ₱{price:.2f}/L", weight=ft.FontWeight.BOLD),
-            content=ft.Column(tight=True, controls=[
-                ft.Text(f"Stock: {stock:.0f}L", size=12, color="grey"),
-                liters_field, ft.Text("or", text_align=ft.TextAlign.CENTER), amount_field, error_text,
-            ]),
+            title=ft.Text(f"Add {fuel_clean_name} (₱{price:.2f}/L)"),
+            content=ft.Column([liters_field, amount_field], tight=True, spacing=10),
             actions=[
                 ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog()),
-                ft.FilledButton("Add to Order", bgcolor=MOBILE_RED, color="white", on_click=add_fuel),
-            ],
-        ))
+                ft.FilledButton("Add to Order", style=ft.ButtonStyle(bgcolor=RED, color="white"), on_click=add_fuel)
+            ]
+        )
+        page.show_dialog(dlg)
 
-    def open_oil_dialog(oil: dict):
-        oil_name = f"{oil.get('brand', '')} {oil.get('name', '')}".strip()
-        price = oil["price"]
-        stock = oil["stock"]
-        qty_field = ft.TextField(label="Quantity", keyboard_type=ft.KeyboardType.NUMBER, autofocus=True)
-        total_field = ft.TextField(label="Total", read_only=True, value="₱0.00")
-        error_text = ft.Text("", color="red", size=12)
-
-        def on_qty(e):
-            try:
-                q = float(qty_field.value or 0)
-                total_field.value = f"₱{q * price:.2f}" if q > 0 else "₱0.00"
-                error_text.value = f"Only {stock} left" if q > stock else ""
-                page.update()
-            except ValueError:
-                pass
-
-        qty_field.on_change = on_qty
+    def open_oil_modal(oil: dict):
+        qty_field = ft.TextField(label="Quantity", value="", keyboard_type=ft.KeyboardType.NUMBER, autofocus=True)
 
         def add_oil(e):
             try:
                 q = int(float(qty_field.value or 0))
-                if q <= 0:
-                    error_text.value = "Enter qty"; page.update(); return
-                if q > stock:
-                    error_text.value = "Insufficient stock"; page.update(); return
-                cart["oil_items"].append({
-                    "oil_id": oil["id"], "quantity": q, "oil_name": oil_name,
-                    "price": price, "total": round(q * price, 2),
-                })
-                page.pop_dialog()
-                refresh_cart_ui()
+                if q > 0:
+                    cart["oil_items"].append({
+                        "oil_id": oil["id"],
+                        "quantity": q,
+                        "oil_name": f"{oil['brand']} {oil['name']}".strip(),
+                        "price": oil["price"],
+                        "total": round(q * oil["price"], 2)
+                    })
+                    refresh_cart_ui()
+                    page.pop_dialog()
             except Exception as ex:
-                error_text.value = str(ex); page.update()
+                print(f"[Multi Oil Add Error] {ex}")
 
-        page.show_dialog(ft.AlertDialog(
+        dlg = ft.AlertDialog(
             modal=True,
-            title=ft.Text(oil_name, weight=ft.FontWeight.BOLD),
-            content=ft.Column(tight=True, controls=[
-                ft.Text(f"Stock: {stock} pcs | ₱{price:.2f}", size=12), qty_field, total_field, error_text,
-            ]),
+            title=ft.Text(f"Add {oil['brand']} {oil['name']}"),
+            content=ft.Column([
+                ft.Text(f"Price: ₱{oil['price']:.2f} | Stock: {oil['stock']}"),
+                qty_field
+            ], tight=True, spacing=10),
             actions=[
                 ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog()),
                 ft.FilledButton("Add to Order", bgcolor=MOBILE_RED, color="white", on_click=add_oil),
@@ -599,37 +655,6 @@ def build_multi_page_mobile(page: ft.Page, auth: dict):
                 ("Premium 1", MOBILE_RED), ("Premium 2", MOBILE_RED),
                 ("Diesel 1", YELLOW), ("Diesel 2", YELLOW),
             ]
-            return two_col_grid([fuel_card(n, c) for n, c in pumps])
-
-        oils = [o for o in auth.get("oils_data", []) if o.get("stock", 0) > 0]
-        if not oils:
-            return ft.Container(content=ft.Text("No oil products in stock", color="grey"), alignment=ft.Alignment.CENTER, expand=True)
-        return two_col_grid([oil_card(o) for o in oils])
-
-    def switch_tab(key):
-        state["tab"] = key
-        toggle_holder.content = build_toggle()
-        body_holder.content = build_body()
-        page.update()
-
-    def build_toggle():
-        def seg(label, key, count):
-            active = state["tab"] == key
-            text = f"{label} ({count})" if count else label
-            return ft.Container(
-                content=ft.Text(text, size=13, weight=ft.FontWeight.BOLD, color="white" if active else MOBILE_RED, text_align=ft.TextAlign.CENTER),
-                bgcolor=MOBILE_RED if active else "transparent",
-                border_radius=20, padding=ft.Padding.symmetric(vertical=10), alignment=ft.Alignment.CENTER,
-                expand=True, ink=True, on_click=lambda e, k=key: switch_tab(k),
-            )
-
-        return ft.Container(
-            content=ft.Row(spacing=0, controls=[
-                seg("Fuel", "fuel", len(cart["fuel_items"])),
-                seg("Oil", "oil", len(cart["oil_items"])),
-            ]),
-            border=ft.Border.all(1.5, MOBILE_RED), border_radius=22, padding=2,
-            margin=ft.Margin.symmetric(horizontal=20),
         )
 
     def load_data():
@@ -637,15 +662,17 @@ def build_multi_page_mobile(page: ft.Page, auth: dict):
             try:
                 auth["fuels_data"] = get_fuels(auth)
             except Exception as ex:
-                print(f"[Multi Mobile] get_fuels failed {ex}")
+                print(f"[Multi Load Fuels Error] {ex}")
                 auth["fuels_data"] = []
+
         if "oils_data" not in auth:
             try:
                 auth["oils_data"] = get_oils(auth)
             except Exception as ex:
-                print(f"[Multi Mobile] get_oils failed {ex}")
+                print(f"[Multi Load Oils Error] {ex}")
                 auth["oils_data"] = []
-        body_holder.content = build_body()
+
+        render_inventory_items()
         page.update()
 
     cart_badge = ft.Container(
@@ -669,6 +696,7 @@ def build_multi_page_mobile(page: ft.Page, auth: dict):
     )
 
     header = ft.Container(
+        bgcolor=RED, height=100, padding=20,
         content=ft.Row(
             controls=[
                 ft.Row(
@@ -700,10 +728,29 @@ def build_multi_page_mobile(page: ft.Page, auth: dict):
         border_radius=ft.BorderRadius(top_left=28, top_right=28, bottom_left=0, bottom_right=0),
         expand=True, padding=ft.Padding.only(top=12, bottom=12),
     )
-
     footer = ft.Container(
-        content=ft.Text("GAStoKITA", size=13, color="white", text_align=ft.TextAlign.CENTER),
-        bgcolor=MOBILE_RED, padding=ft.Padding.symmetric(vertical=14), alignment=ft.Alignment.CENTER,
+        height=80,
+        bgcolor=RED,
+        padding=ft.Padding.symmetric(vertical=14, horizontal=24),
+        content=ft.Row(
+            alignment=ft.MainAxisAlignment.END,
+            controls=[
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16),
+                            ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)
+                        ],
+                        spacing=6
+                    ),
+                    bgcolor="#6B6B6B",
+                    border_radius=6,
+                    padding=ft.Padding.symmetric(vertical=8, horizontal=14),
+                    ink=True,
+                    on_click=go_logout
+                )
+            ]
+        )
     )
 
     toggle_holder.content = build_toggle()

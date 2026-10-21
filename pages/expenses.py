@@ -1,5 +1,5 @@
 import flet as ft
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import time
 from pages.api_client import (
         get_unified_expenses,get_expenses_summary,create_operational_expense,
@@ -75,6 +75,8 @@ def expenses_page(page: ft.Page, auth: dict):
             val = from_datepicker.value
             from_date.value = val.strftime("%Y-%m-%d") if isinstance(val, (datetime, date)) else str(val)[:10]
             from_date.update()
+            period_dropdown.value = "all"
+            period_dropdown.update()
             load_backend_data()
 
     def handle_to_date_change(e):
@@ -82,6 +84,8 @@ def expenses_page(page: ft.Page, auth: dict):
             val = to_datepicker.value
             to_date.value = val.strftime("%Y-%m-%d") if isinstance(val, (datetime, date)) else str(val)[:10]
             to_date.update()
+            period_dropdown.value = "all"
+            period_dropdown.update()
             load_backend_data()
 
     from_datepicker = ft.DatePicker(on_change=handle_from_date_change)
@@ -126,6 +130,49 @@ def expenses_page(page: ft.Page, auth: dict):
             on_click=lambda _: setattr(to_datepicker, "open", True) or page.update(),
         ),
         on_click=lambda _: setattr(to_datepicker, "open", True) or page.update(),
+    )
+
+    def handle_period_change(e):
+        today = date.today()
+        v = period_dropdown.value
+        if v == "daily":
+            from_date.value = today.strftime("%Y-%m-%d")
+            to_date.value = today.strftime("%Y-%m-%d")
+        elif v == "weekly":
+            from_date.value = (today - timedelta(days=6)).strftime("%Y-%m-%d")
+            to_date.value = today.strftime("%Y-%m-%d")
+        elif v == "monthly":
+            from_date.value = today.replace(day=1).strftime("%Y-%m-%d")
+            to_date.value = today.strftime("%Y-%m-%d")
+        elif v == "yearly":
+            from_date.value = today.replace(month=1, day=1).strftime("%Y-%m-%d")
+            to_date.value = today.strftime("%Y-%m-%d")
+        else:  # all
+            from_date.value = ""
+            to_date.value = ""
+            from_datepicker.value = None
+            to_datepicker.value = None
+        from_date.update()
+        to_date.update()
+        load_backend_data()
+
+    period_dropdown = ft.DropdownM2(
+        label="Period",
+        value="all",
+        filled=True,
+        fill_color=WHITE,
+        border_radius=6,
+        border_color="#CCCCCC",
+        focused_border_color=DARK_RED,
+        width=130,
+        options=[
+            ft.dropdownm2.Option("all", "All"),
+            ft.dropdownm2.Option("daily", "Daily"),
+            ft.dropdownm2.Option("weekly", "Weekly"),
+            ft.dropdownm2.Option("monthly", "Monthly"),
+            ft.dropdownm2.Option("yearly", "Yearly"),
+        ],
+        on_change=handle_period_change,
     )
 
     type_dropdown = ft.DropdownM2(
@@ -457,7 +504,7 @@ def expenses_page(page: ft.Page, auth: dict):
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 ),
                 ft.Container(height=8),
-                ft.Row(controls=[type_dropdown, from_date, to_date], spacing=12, wrap=True),
+                ft.Row(controls=[type_dropdown, period_dropdown, from_date, to_date], spacing=12, wrap=True),
             ],
             spacing=0,
             tight=True,
