@@ -1,6 +1,7 @@
+import os
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from backend.routers import employees, fuels, inventory, auth, receipt, sales, analytics, expenses, oils, gcash
 from .db.database import create_db_and_tables
@@ -17,6 +18,16 @@ app = FastAPI(
     version="1.6.1",
     lifespan=lifespan
 )
+
+HTML = os.path.join(os.path.dirname(__file__), "static")
+
+@app.get("/payment/success", response_class=FileResponse)
+def payment_success():
+    return FileResponse(os.path.join(HTML, "success.html"))
+
+@app.get("/payment/failed", response_class=FileResponse)
+def payment_failed():
+    return FileResponse(os.path.join(HTML, "failed.html"))
 
 app.add_middleware(
     CORSMiddleware,
