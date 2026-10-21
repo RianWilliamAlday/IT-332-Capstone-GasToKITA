@@ -39,7 +39,7 @@ def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None):
         try:
             paid["value"] = float(s) if s not in ("", ".") else 0.0
         except ValueError:
-            return
+            paid["value"] = 0.0
 
     amount_field.on_change = on_amount_change
 
@@ -53,8 +53,8 @@ def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None):
         amount_field.value = f"{paid['value']:.2f}"
         page.update()
 
-    def add_value(e, v):
-        paid["value"] += float(v)
+    def set_value(e, v):
+        paid["value"] = float(v)
         refresh()
 
     def on_back(e):
@@ -87,7 +87,7 @@ def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None):
         return ft.Container(
             width=115, height=48, bgcolor=RED, border_radius=18,
             alignment=ft.Alignment(0, 0), ink=True,
-            on_click=lambda e, v=value: add_value(e, v),
+            on_click=lambda e, v=value: set_value(e, v),
             content=ft.Text(value, size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
         )
 
@@ -180,7 +180,11 @@ def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None):
                     result = create_fuel_sale(auth, pump_id, liters, attendant, payment_method, paid["value"])
                     print(f"[SALE OK] Fuel: {result}")
                 elif tx_type == "multi":
-                    result = submit_multi_sale(auth, paid["value"], payment_method)
+                    result = submit_multi_sale(
+                        auth=auth,
+                        amount_paid=paid["value"],
+                        payment_method=payment_method
+                    )
                     print(f"[SALE OK] Multi: {result}")
                 else:
                     oil_id = transaction.get("oil_id")
@@ -192,6 +196,7 @@ def build_pos_page(page: ft.Page, auth: dict, transaction: dict = None):
 
                 auth.pop("fuels_data", None)
                 auth.pop("oils_data", None)
+                auth["cart"] = {"fuel_items": [], "oil_items": []}
 
                 show_snack(f"Paid! Change ₱{change:.2f}", bgcolor=GREEN_COLOR)
 

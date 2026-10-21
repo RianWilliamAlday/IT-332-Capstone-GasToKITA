@@ -108,14 +108,14 @@ def build_pump_page(page: ft.Page, auth: dict):
         )
 
     def open_fuel_dialog(fuel_pump_name: str):
+        fuel_name_clean = fuel_pump_name.split()[0]
         fuel = get_fuel_for_pump(fuel_pump_name)
         if fuel:
             price = fuel["price"]
             stock = fuel["actual_liters"]
             tank_capacity = fuel["tank_capacity"]
         else:
-            base = fuel_pump_name.split()[0]
-            price = FALLBACK_PRICES.get(base, 60.0)
+            price = FALLBACK_PRICES.get(fuel_name_clean, 60.0)
             stock = 9999
             tank_capacity = 8092
 
@@ -175,12 +175,12 @@ def build_pump_page(page: ft.Page, auth: dict):
                 page.pop_dialog()
                 from pages.pos import build_pos_page
                 tx = {
-                    "label": fuel_pump_name,
+                    "label": fuel_name_clean,
                     "details": f"{l:.3f}L x ₱{price:.2f}",
                     "total": a,
                     "liters": l,
                     "pump_id": PUMP_MAP.get(fuel_pump_name, 1),
-                    "fuel_name": fuel_pump_name.split()[0],
+                    "fuel_name": fuel_name_clean,
                     "type": "fuel",
                     "payment_method": "cash"
                 }
@@ -228,12 +228,12 @@ def build_pump_page(page: ft.Page, auth: dict):
 
                     from pages.change import build_change_page
                     tx = {
-                        "label": fuel_pump_name,
-                        "details": f"GCash PAID - ₱{total_amt:.2f}",
+                        "label": fuel_name_clean,
+                        "details": f"{liters_captured:.3f}L x ₱{price:.2f}",
                         "total": total_amt,
                         "liters": liters_captured,
                         "pump_id": PUMP_MAP.get(fuel_pump_name, 1),
-                        "fuel_name": fuel_pump_name.split()[0],
+                        "fuel_name": fuel_name_clean,
                         "type": "fuel",
                         "payment_method": "gcash",
                         "sale_id": sale_id_captured,
@@ -260,12 +260,12 @@ def build_pump_page(page: ft.Page, auth: dict):
                                 result = manual_confirm_gcash(auth, sale_id_captured, product_type="fuel")
                                 from pages.change import build_change_page
                                 tx = {
-                                    "label": fuel_pump_name,
-                                    "details": f"GCash PAID - ₱{total_amt:.2f}",
+                                    "label": fuel_name_clean,
+                                    "details": f"{liters_captured:.3f}L x ₱{price:.2f}",
                                     "total": total_amt,
                                     "liters": liters_captured,
                                     "pump_id": PUMP_MAP.get(fuel_pump_name, 1),
-                                    "fuel_name": fuel_pump_name.split()[0],
+                                    "fuel_name": fuel_name_clean,
                                     "type": "fuel",
                                     "payment_method": "gcash",
                                     "sale_id": status.get("sale_id") or sale_id_captured,
@@ -452,10 +452,29 @@ def build_pump_page(page: ft.Page, auth: dict):
             ],
         ),
     )
-    footer = ft.Container(height=80,bgcolor=RED, padding=ft.Padding.symmetric(vertical=14, horizontal=24),content=ft.Row([
-                        ft.Container(content=ft.Row([ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16), ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)], spacing=6), bgcolor="#6B6B6B", border_radius=6, padding=ft.Padding.symmetric(vertical=8, horizontal=14), ink=True, on_click=go_logout)
-                        ]
-                    )
+    footer = ft.Container(
+        height=80,
+        bgcolor=RED,
+        padding=ft.Padding.symmetric(vertical=14, horizontal=24),
+        content=ft.Row(
+            alignment=ft.MainAxisAlignment.END,
+            controls=[
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16),
+                            ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)
+                        ],
+                        spacing=6
+                    ),
+                    bgcolor="#6B6B6B",
+                    border_radius=6,
+                    padding=ft.Padding.symmetric(vertical=8, horizontal=14),
+                    ink=True,
+                    on_click=go_logout
                 )
+            ]
+        )
+    )
 
     return ft.Column(spacing=0, expand=True, controls=[header, body, footer])

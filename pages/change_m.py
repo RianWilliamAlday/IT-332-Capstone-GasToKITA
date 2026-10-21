@@ -2,6 +2,7 @@
 import flet as ft
 import requests
 from pages.api_client import BASE_URL
+from pages.sidebar_m import Sidebar
 
 MOBILE_RED = "#8B0000"
 GREEN = "#118C4F"
@@ -15,6 +16,7 @@ def build_change_page_mobile(page: ft.Page, auth: dict, transaction: dict=None, 
     page.window.height = 844
     page.window.resizable = False
 
+    sidebar = Sidebar(page, auth, active="pos")
 
     def show_snack(msg, color=MOBILE_RED):
         snack = ft.SnackBar(content=ft.Text(msg, color="white"), bgcolor=color, open=True)
@@ -64,18 +66,26 @@ def build_change_page_mobile(page: ft.Page, auth: dict, transaction: dict=None, 
     header = ft.Container(
         content=ft.Row(
             controls=[
-                ft.Column(controls=[ft.Text("Pump", size=16, weight=ft.FontWeight.BOLD, color="white"), ft.Text("Attendant", size=16, weight=ft.FontWeight.BOLD, color="white")], spacing=0),
+                ft.Row(
+                    controls=[
+                        sidebar.menu_button(),
+                        ft.Column(controls=[ft.Text("Cashier", size=16, weight=ft.FontWeight.BOLD, color="white")], spacing=0),
+                    ],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
                 ft.Row(controls=[ft.Text("U-FUEL", size=16, weight=ft.FontWeight.BOLD, color="white"), ft.Container(content=ft.Image(src="u-fuel_logo.jpg", width=40, height=40, fit=ft.BoxFit.CONTAIN), bgcolor="white", border_radius=8, padding=4, width=40, height=40)], spacing=8),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
-        padding=ft.Padding.symmetric(horizontal=20, vertical=14),
+        padding=ft.Padding.only(left=8, right=20, top=10, bottom=10),
     )
     
     content_card = ft.Container(content=ft.Column(controls=[outer], expand=True, alignment=ft.MainAxisAlignment.CENTER), bgcolor="white", border_radius=ft.BorderRadius(top_left=28, top_right=28, bottom_left=0, bottom_right=0), expand=True, padding=ft.Padding.all(24), alignment=ft.Alignment.CENTER)
     footer = ft.Container(content=ft.Text("GAStoKITA", size=13, color="white", text_align=ft.TextAlign.CENTER), bgcolor=MOBILE_RED, padding=ft.Padding.symmetric(vertical=14), alignment=ft.Alignment.CENTER)
     
     return ft.SafeArea(
-        content=ft.Column(controls=[header, ft.Container(height=10), content_card, footer], expand=True, spacing=0),
+        content=sidebar.wrap(ft.Column(controls=[header, ft.Container(height=10), content_card, footer], expand=True, spacing=0)),
         expand=True,
     )
