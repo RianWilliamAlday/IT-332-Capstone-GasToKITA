@@ -1,10 +1,9 @@
 import flet as ft
-from pages.history import TEXT_WHITE
-from pages.select import select_transaction
 from pages.api_client import get_attendant_names, DEFAULT_ATTENDANTS
 
 RED = "#A61E22"
 LIGHT_GRAY = "#E9E9E9"
+TEXT_WHITE  = "#FFFFFF"
 
 def pa_selection(page: ft.Page, auth: dict):
     page.title = "Select Pump Attendant"
@@ -15,10 +14,11 @@ def pa_selection(page: ft.Page, auth: dict):
         print("[WARN] No token in auth, user might not be logged in")
 
     def select_attendant(name: str):
+        from pages.select_multi import build_multi_page
         auth["selected_attendant"] = name
         print(f"Selected {name} by: {auth.get('name') or auth.get('user')}")
         page.controls.clear()
-        page.add(select_transaction(page, auth))
+        page.add(build_multi_page(page, auth))
         page.update()
 
     async def go_logout(e):

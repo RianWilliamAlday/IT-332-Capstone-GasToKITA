@@ -182,6 +182,9 @@ def history_page(page: ft.Page, auth: dict):
             start_d = today.replace(day=1)
             from_date.value = start_d.strftime("%Y-%m-%d")
             to_date.value = today.strftime("%Y-%m-%d")
+        elif period_dropdown.value == "yearly":
+            from_date.value = today.replace(month=1, day=1).strftime("%Y-%m-%d")
+            to_date.value = today.strftime("%Y-%m-%d")
         elif period_dropdown.value == "all":
             from_date.value = ""
             to_date.value = ""
@@ -199,7 +202,8 @@ def history_page(page: ft.Page, auth: dict):
             ft.dropdownm2.Option("all","All"),
             ft.dropdownm2.Option("daily","Daily"), 
             ft.dropdownm2.Option("weekly","Weekly"), 
-            ft.dropdownm2.Option("monthly","Monthly")
+            ft.dropdownm2.Option("monthly","Monthly"),
+            ft.dropdownm2.Option("yearly","Yearly")
         ],
         on_change=handle_period_change
     )
@@ -234,7 +238,7 @@ def history_page(page: ft.Page, auth: dict):
     )
 
     columns = ["Attendant", "Date & Time", "Type", "Item", "Pump", "Quantity", "Amount", "Paid", "Change", "Payment", "Recorded By"]
-    col_widths = [120, 150, 80, 240, 70, 75, 85, 85, 85, 75, 95]
+    col_widths = [120, 150, 80, 240, 85, 85, 85, 85, 85, 75, 95]
 
     def header_cell(text, width): 
         return ft.Container(content=ft.Text(text, size=12, color="#555555", weight=ft.FontWeight.W_600), width=width, padding=ft.Padding.symmetric(horizontal=8, vertical=10))

@@ -21,8 +21,7 @@ def cashier_history(page: ft.Page, auth: dict):
     transactions_text = ft.Text(str(cache.get("total_count", 0)) if cache else "0", size=20, weight=ft.FontWeight.BOLD, color="#1565C0")
     
     cached_sales = cache.get("sales", [])
-    
-    # Counts fuel & oil occurrences including multi-sales
+
     fuel_count_init = sum(1 if s.get("product_type") == "fuel" else str(s.get("product_name", "")).count("L)") for s in cached_sales)
     oil_count_init  = sum(1 if s.get("product_type") == "oil" else str(s.get("product_name", "")).count("pcs)") for s in cached_sales)
 
@@ -168,6 +167,9 @@ def cashier_history(page: ft.Page, auth: dict):
         elif period_dropdown.value == "monthly":
             from_date.value = today.replace(day=1).strftime("%Y-%m-%d")
             to_date.value = today.strftime("%Y-%m-%d")
+        elif period_dropdown.value == "yearly":
+            from_date.value = today.replace(month=1, day=1).strftime("%Y-%m-%d")
+            to_date.value = today.strftime("%Y-%m-%d")
         elif period_dropdown.value == "all":
             from_date.value = ""
             to_date.value = ""
@@ -185,7 +187,8 @@ def cashier_history(page: ft.Page, auth: dict):
             ft.dropdownm2.Option("all","All"),
             ft.dropdownm2.Option("daily","Daily"), 
             ft.dropdownm2.Option("weekly","Weekly"), 
-            ft.dropdownm2.Option("monthly","Monthly")
+            ft.dropdownm2.Option("monthly","Monthly"),
+            ft.dropdownm2.Option("yearly","Yearly")
         ],
         on_change=handle_period_change
     )
@@ -217,8 +220,8 @@ def cashier_history(page: ft.Page, auth: dict):
         on_click=open_to_picker
     )
 
-    columns = ["Attendant", "Date & Time", "Type", "Item", "Pump", "Quantity", "Amount", "Paid", "Change", "Payment", "Recorded By", "Action"]
-    col_widths = [110, 140, 75, 240, 65, 70, 80, 80, 80, 70, 90, 80]
+    columns = ["Attendant", "Date & Time", "Type", "Item", "Pump", "Quantity", "Amount", "Paid", "Change", "Payment", "Action"]
+    col_widths = [110, 140, 75, 240, 85, 85, 80, 80, 80, 70, 80]
 
     def header_cell(text, width): 
         return ft.Container(content=ft.Text(text, size=12, color="#555555", weight=ft.FontWeight.W_600), width=width, padding=ft.Padding.symmetric(horizontal=8, vertical=10))
@@ -337,7 +340,7 @@ def cashier_history(page: ft.Page, auth: dict):
 
             action_cell = ft.Container(
                 content=print_button,
-                width=col_widths[11],
+                width=col_widths[10],
                 padding=ft.Padding.symmetric(horizontal=4, vertical=8),
                 alignment=ft.Alignment(0, 0)
             )
@@ -354,7 +357,6 @@ def cashier_history(page: ft.Page, auth: dict):
                     data_cell(f"₱{paid:.2f}", col_widths[7], bold=True), 
                     data_cell(f"₱{change:.2f}", col_widths[8], color="#2E7D32"),
                     data_cell(s.get("payment_method","cash"), col_widths[9]), 
-                    data_cell(s.get("recorded_by","Admin"), col_widths[10]),
                     action_cell,
                 ], spacing=0), bgcolor="#FAFAFA" if i%2==0 else "white", border=ft.Border.only(bottom=ft.BorderSide(1, "#F0F0F0")),
             )
