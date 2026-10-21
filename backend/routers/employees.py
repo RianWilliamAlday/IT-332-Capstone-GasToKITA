@@ -138,6 +138,7 @@ def get_cashier_history(
             .outerjoin(Fuel, Sale.fuel_id == Fuel.id)
             .outerjoin(Pump, Sale.pump_id == Pump.id)
             .where(Sale.recorded_by == user_id)
+            .where(Sale.payment_status == "paid")
         )
         if start_date:
             fuel_stmt = fuel_stmt.where(Sale.sold_at >= datetime.combine(start_date, time.min))
@@ -163,6 +164,7 @@ def get_cashier_history(
             select(OilSale, OilProduct.brand, OilProduct.name)
             .outerjoin(OilProduct, OilSale.oil_product_id == OilProduct.id)
             .where(OilSale.sold_by == user_id)
+            .where(OilSale.payment_status == "paid")
         )
         if start_date:
             oil_stmt = oil_stmt.where(OilSale.sold_at >= datetime.combine(start_date, time.min))
@@ -261,7 +263,6 @@ def get_cashier_history(
                 grand_paid = grand_total
                 grand_change = 0.0
             else:
-    # For cash, check if first_sale stored the full transaction payment
                 stored_paid = float(first_sale.amount_paid or 0.0)
                 grand_paid = stored_paid if stored_paid >= grand_total else grand_total
                 grand_change = float(first_sale.change_given or 0.0)
