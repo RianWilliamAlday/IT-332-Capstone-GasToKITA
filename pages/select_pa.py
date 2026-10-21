@@ -1,10 +1,9 @@
 import flet as ft
-from pages.history import TEXT_WHITE
-from pages.select import select_transaction
 from pages.api_client import get_attendant_names, DEFAULT_ATTENDANTS
 
 RED = "#A61E22"
 LIGHT_GRAY = "#E9E9E9"
+TEXT_WHITE  = "#FFFFFF"
 
 def pa_selection(page: ft.Page, auth: dict):
     page.title = "Select Pump Attendant"
@@ -15,10 +14,11 @@ def pa_selection(page: ft.Page, auth: dict):
         print("[WARN] No token in auth, user might not be logged in")
 
     def select_attendant(name: str):
+        from pages.select_multi import build_multi_page
         auth["selected_attendant"] = name
         print(f"Selected {name} by: {auth.get('name') or auth.get('user')}")
         page.controls.clear()
-        page.add(select_transaction(page, auth))
+        page.add(build_multi_page(page, auth))
         page.update()
 
     async def go_logout(e):
@@ -29,6 +29,12 @@ def pa_selection(page: ft.Page, auth: dict):
         page.controls.clear()
         from app import main as app_main
         await app_main(page)
+        page.update()
+
+    def go_history(e):
+        from pages.c_history import cashier_history
+        page.controls.clear()
+        page.add(cashier_history(page, auth))
         page.update()
 
     header = ft.Container(
@@ -47,11 +53,39 @@ def pa_selection(page: ft.Page, auth: dict):
                 ])
             ]))
 
-    footer = ft.Container(height=80,bgcolor=RED, padding=ft.Padding.symmetric(vertical=14, horizontal=24),content=ft.Row([
-                        ft.Container(content=ft.Row([ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16), ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)], spacing=6), bgcolor="#6B6B6B", border_radius=6, padding=ft.Padding.symmetric(vertical=8, horizontal=14), ink=True, on_click=go_logout)
-                        ]
-                    )
+    footer = ft.Container(
+        height=80,
+        bgcolor=RED,
+        padding=ft.Padding.symmetric(vertical=14, horizontal=24),
+        content=ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.Container(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.HISTORY, color=TEXT_WHITE, size=16),
+                        ft.Text("HISTORY", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)
+                    ], spacing=6),
+                    bgcolor="#6B6B6B",
+                    border_radius=6,
+                    padding=ft.Padding.symmetric(vertical=8, horizontal=14),
+                    ink=True,
+                    on_click=go_history
+                ),
+                ft.Container(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16),
+                        ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)
+                    ], spacing=6),
+                    bgcolor="#6B6B6B",
+                    border_radius=6,
+                    padding=ft.Padding.symmetric(vertical=8, horizontal=14),
+                    ink=True,
+                    on_click=go_logout
                 )
+            ]
+        )
+    )
 
     def card(title, handler):
         is_selected = auth.get("selected_attendant") == title

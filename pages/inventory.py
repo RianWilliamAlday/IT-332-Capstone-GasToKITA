@@ -3,7 +3,7 @@ import time, threading, traceback
 from pages.api_client import (
     get_fuels, get_oils, restock_fuel, update_fuel_price,
     dipstick_convert, sync_dipstick, create_oil_product, restock_oil,
-    update_oil, update_fuel_threshold
+    update_oil, update_fuel_threshold, get_daily_liters_summary, upload_oil_image
 )
 
 DARK_RED = "#8B0000"
@@ -19,11 +19,14 @@ def open_dialog_compat(page: ft.Page, dialog: ft.AlertDialog):
 def close_dialog_compat(page: ft.Page, dialog=None):
     page.pop_dialog()
 
-
 def inventory_page(page: ft.Page, auth: dict):
     page.title = "Inventory"
     page.bgcolor = LIGHT_BG
     page.padding = 0
+
+    page.services[:] = [s for s in page.services if not isinstance(s, ft.FilePicker)]
+    file_picker = ft.FilePicker()
+    page.services.append(file_picker)
 
     selected = {"tab": "fuel"}
     content_area = ft.Column([], spacing=16, scroll=ft.ScrollMode.ADAPTIVE, expand=True)
@@ -275,11 +278,7 @@ def inventory_page(page: ft.Page, auth: dict):
                         content=ft.Text(
                             f"₱{batch_price:.2f}",
                             size=9, color=WHITE, weight=ft.FontWeight.BOLD
-<<<<<<< HEAD
-                        ) if capacity and (liters / capacity) > 0.1 else None
-=======
                         ) if capacity and (liters / capacity) > 0.5 else None
->>>>>>> 8f64dcbf2778592e3efcbb26e575f2e7e8e7f2c7
                     )
                 )
             empty_liters = max(0, capacity - current)
@@ -343,13 +342,7 @@ def inventory_page(page: ft.Page, auth: dict):
                 ft.Text("0L", size=9, color="#9CA3AF"),
                 ft.Text(f"Threshold {threshold_pct:.0f}%", size=9, color=ORANGE if is_below else "#6B7280", weight=ft.FontWeight.BOLD),
                 ft.Text(f"{capacity:,}L", size=9, color="#9CA3AF"),
-<<<<<<< HEAD
-            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-
-            ft.Row(legend_items, spacing=16, wrap=True) if legend_items else ft.Container(),
-=======
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
->>>>>>> 8f64dcbf2778592e3efcbb26e575f2e7e8e7f2c7
         ])
 
         return ft.Container(
@@ -473,7 +466,39 @@ def inventory_page(page: ft.Page, auth: dict):
         pf = ft.TextField(label="Price", width=200, value=str(o.get('price',0)), keyboard_type=ft.KeyboardType.NUMBER)
         tf = ft.TextField(label="Reorder Point", width=200, value=str(o.get('low_stock_threshold',5)), keyboard_type=ft.KeyboardType.NUMBER)
         err = ft.Text("", size=11, color=DARK_RED)
-        
+
+        selected_file = {"bytes": None, "name": None}
+        img_status = ft.Text("Image: Set" if o.get("image_url") else "No image uploaded", size=11, color="grey")
+
+        async def pick_image(_):
+            files = await file_picker.pick_files(
+                allow_multiple=False,
+                file_type=ft.FilePickerFileType.IMAGE,
+                with_data=True,
+            )
+            if not files:
+                return
+            f = files[0]
+            try:
+                if f.path:
+                    with open(f.path, "rb") as fh:
+                        selected_file["bytes"] = fh.read()
+                else:
+                    selected_file["bytes"] = f.bytes
+                selected_file["name"] = f.name
+                img_status.value = f"Selected: {f.name}"
+                img_status.color = GREEN
+            except Exception as ex:
+                img_status.value = f"Could not read image: {ex}"
+                img_status.color = DARK_RED
+            img_status.update()
+
+        upload_btn = ft.OutlinedButton(
+            "Choose Product Image",
+            icon=ft.Icons.IMAGE_OUTLINED,
+            on_click=pick_image,
+        )
+
         def do_save(ev):
             try:
                 if not bf.value or not nf.value: 
@@ -496,7 +521,11 @@ def inventory_page(page: ft.Page, auth: dict):
                     time.sleep(0.1)
                     try:
                         update_oil(auth, oil_id, payload)
-                        show_snack(f"Updated product details for {bf.value} {nf.value}", GREEN)
+                        
+                        if selected_file["bytes"]:
+                            upload_oil_image(auth, oil_id, selected_file["bytes"], selected_file["name"])
+                            
+                        show_snack(f"Updated {bf.value} {nf.value}", GREEN)
                         auth.pop("oils_cache", None)
                         load_oils()                  
                     except Exception as ex: 
@@ -505,10 +534,10 @@ def inventory_page(page: ft.Page, auth: dict):
             except Exception as ex: 
                 err.value = str(ex)
                 err.update()
-            
+
         dialog = ft.AlertDialog(
-            title=ft.Text(f"Edit Product Settings"), 
-            content=ft.Column(tight=True, controls=[bf, nf, vf, sf, pf, tf, err]), 
+            title=ft.Text("Edit Product Settings"), 
+            content=ft.Column(tight=True, controls=[bf, nf, vf, sf, pf, tf, upload_btn, img_status, err]), 
             actions=[
                 ft.TextButton("Cancel", on_click=lambda e: close_dialog_compat(page)), 
                 ft.FilledButton("Save Changes", bgcolor=DARK_RED, color="white", on_click=do_save)
@@ -517,17 +546,49 @@ def inventory_page(page: ft.Page, auth: dict):
         open_dialog_compat(page, dialog)
 
     def oil_table(oils: list):
+        IMG_SIZE = 72
+        IMG_COL_W = IMG_SIZE + 20
         def h_cell(t,w): return ft.Container(width=w, padding=10, content=ft.Text(t, size=12, weight=ft.FontWeight.BOLD, color=BLACK))
         def d_cell(t,w): return ft.Container(width=w, padding=10, content=ft.Text(str(t), size=13, color=BLACK))
-        header_row = ft.Container(bgcolor="#F9FAFB", border=ft.Border.only(bottom=ft.BorderSide(1, "#E5E7EB")), content=ft.Row([h_cell("Oil Name",200), h_cell("Brand",100), h_cell("Stock",110), h_cell("Threshold",110), h_cell("Price",80), h_cell("Status",120)], spacing=0))
-        rows=[]
+    
+        header_row = ft.Container(
+            bgcolor="#F9FAFB", border=ft.Border.only(bottom=ft.BorderSide(1, "#E5E7EB")), 
+            content=ft.Row([
+                h_cell("Image", IMG_COL_W), 
+                h_cell("Oil Name", 180), 
+                h_cell("Brand", 100), 
+                h_cell("Stock", 100), 
+                h_cell("Threshold", 90), 
+                h_cell("Price", 80), 
+                h_cell("Status", 110)
+            ], spacing=0)
+        )
+    
+        rows = []
         for i, oil in enumerate(oils):
-            def make_handler(o):
-                def handler(e):
-                    open_edit_oil_dialog(o)
-                return handler
-            rows.append(ft.Container(bgcolor="#FAFAFA" if i%2==0 else WHITE, border=ft.Border.only(bottom=ft.BorderSide(1, "#F3F4F6")), ink=True, on_click=make_handler(oil),
-                content=ft.Row([d_cell(oil.get('name',''),200), d_cell(oil.get('brand',''),100), d_cell(f"{oil.get('stock',0)} pcs",110), d_cell(f"{oil.get('low_stock_threshold',5)}",110), d_cell(f"₱{oil.get('price',0):.2f}",80), ft.Container(width=120, padding=10, content=status_badge(oil.get('stock',0), oil.get('low_stock_threshold',5)))], spacing=0)))
+            img_url = oil.get("image_url")
+            img_control = (
+                ft.Image(src=img_url, width=IMG_SIZE, height=IMG_SIZE, fit=ft.BoxFit.COVER, border_radius=8) 
+                if img_url else 
+                ft.Icon(ft.Icons.WATER_DROP_OUTLINED, size=40, color="grey")
+            )
+            img_cell = ft.Container(width=IMG_COL_W, padding=8, alignment=ft.Alignment.CENTER, content=img_control)
+
+            rows.append(ft.Container(
+                bgcolor="#FAFAFA" if i%2==0 else WHITE, 
+                border=ft.Border.only(bottom=ft.BorderSide(1, "#F3F4F6")), 
+                ink=True, 
+                on_click=lambda e, o=oil: open_edit_oil_dialog(o),
+                content=ft.Row([
+                    img_cell, 
+                    d_cell(oil.get('name',''), 180), 
+                    d_cell(oil.get('brand',''), 100), 
+                    d_cell(f"{oil.get('stock',0)} pcs", 100), 
+                    d_cell(f"{oil.get('low_stock_threshold',5)}", 90), 
+                    d_cell(f"₱{oil.get('price',0):.2f}", 80), 
+                    ft.Container(width=110, padding=10, content=status_badge(oil.get('stock',0), oil.get('low_stock_threshold',5)))
+                ], spacing=0)
+            ))
         return ft.Container(bgcolor=WHITE, border_radius=10, clip_behavior=ft.ClipBehavior.HARD_EDGE, shadow=ft.BoxShadow(blur_radius=6, color="#00000012", offset=ft.Offset(0,2)), content=ft.Column([header_row, *rows], spacing=0))
 
     def go_dashboard(e):
@@ -571,7 +632,39 @@ def inventory_page(page: ft.Page, auth: dict):
         cf = ft.TextField(label="Cost", width=200, value="0", keyboard_type=ft.KeyboardType.NUMBER)
         tf = ft.TextField(label="Reorder Point", width=200, value="5", keyboard_type=ft.KeyboardType.NUMBER)
         err = ft.Text("", size=11, color=DARK_RED)
-        
+
+        selected_file = {"bytes": None, "name": None}
+        img_status = ft.Text("No image selected", size=11, color="grey")
+
+        async def pick_image(_):
+            files = await file_picker.pick_files(
+                allow_multiple=False,
+                file_type=ft.FilePickerFileType.IMAGE,
+                with_data=True,
+            )
+            if not files:
+                return
+            f = files[0]
+            try:
+                if f.path:
+                    with open(f.path, "rb") as fh:
+                        selected_file["bytes"] = fh.read()
+                else:
+                    selected_file["bytes"] = f.bytes
+                selected_file["name"] = f.name
+                img_status.value = f"Selected: {f.name}"
+                img_status.color = GREEN
+            except Exception as ex:
+                img_status.value = f"Could not read image: {ex}"
+                img_status.color = DARK_RED
+            img_status.update()
+
+        upload_btn = ft.OutlinedButton(
+            "Choose Product Image",
+            icon=ft.Icons.IMAGE_OUTLINED,
+            on_click=pick_image,
+        )
+
         def do_add(ev):
             try:
                 if not bf.value or not nf.value: 
@@ -582,7 +675,7 @@ def inventory_page(page: ft.Page, auth: dict):
                 def bg():
                     time.sleep(0.1)
                     try:
-                        create_oil_product(
+                        created = create_oil_product(
                             auth, 
                             bf.value, 
                             nf.value, 
@@ -592,7 +685,30 @@ def inventory_page(page: ft.Page, auth: dict):
                             vf.value, 
                             int(float(tf.value or 5))
                         )
-                        show_snack(f"Added {bf.value} {nf.value}", GREEN)
+
+                        img_failed = None
+                        if selected_file["bytes"]:
+                            try:
+                                new_id = None
+                                if isinstance(created, dict):
+                                    new_id = created.get("id") or (created.get("data") or {}).get("id")
+                                if new_id is None:
+                                    fresh = get_oils(auth)
+                                    match = [x for x in fresh
+                                             if x.get("brand") == bf.value and x.get("name") == nf.value
+                                             and (x.get("variant") or "") == (vf.value or "")]
+                                    if match:
+                                        new_id = max(m["id"] for m in match)
+                                if new_id is None:
+                                    raise Exception("could not find the new product")
+                                upload_oil_image(auth, new_id, selected_file["bytes"], selected_file["name"])
+                            except Exception as ex:
+                                img_failed = str(ex)
+
+                        if img_failed:
+                            show_snack(f"Added {bf.value} {nf.value}, but image upload failed: {img_failed}", DARK_RED)
+                        else:
+                            show_snack(f"Added {bf.value} {nf.value}", GREEN)
                         auth.pop("oils_cache", None)
                         load_oils()
                     except Exception as ex: 
@@ -604,7 +720,7 @@ def inventory_page(page: ft.Page, auth: dict):
 
         dialog = ft.AlertDialog(
             title=ft.Text("Add Oil Product"), 
-            content=ft.Column(tight=True, controls=[bf, nf, vf, sf, pf, cf, tf, err]), 
+            content=ft.Column(tight=True, controls=[bf, nf, vf, sf, pf, cf, tf, upload_btn, img_status, err]), 
             actions=[
                 ft.TextButton("Cancel", on_click=lambda e: close_dialog_compat(page)), 
                 ft.FilledButton("Add", bgcolor=DARK_RED, color="white", on_click=do_add)
@@ -625,12 +741,62 @@ def inventory_page(page: ft.Page, auth: dict):
     
     title_row = ft.Row(controls=[ft.Container(expand=True), dipstick_btn, add_oil_btn, restock_oil_btn], alignment=ft.MainAxisAlignment.END, spacing=10)
 
+    FUEL_CARD_COLORS = {
+        "regular": (GREEN, GREEN, "#DCEFE3"),
+        "premium": (DARK_RED, DARK_RED, "#F3DADA"),
+        "diesel":  ("#F5C243", "#A16207", "#FCF1D0"),
+    }
+    FUEL_CARD_FALLBACKS = [("#1565C0", "#1565C0", "#DCE8F7"), (ORANGE, ORANGE, "#FBE8CF")]
+
+    def make_fuel_sold_card(fuel_name, liters, palette):
+        accent, text_color, tint = palette
+        return ft.Container(
+            content=ft.Row(controls=[
+                ft.Container(width=5, bgcolor=accent),
+                ft.Container(
+                    expand=True, padding=ft.Padding.symmetric(horizontal=14, vertical=12),
+                    content=ft.Row(controls=[
+                        ft.Container(width=34, height=34, border_radius=17, bgcolor=tint, alignment=ft.Alignment.CENTER,
+                                     content=ft.Icon(ft.Icons.LOCAL_GAS_STATION, size=18, color=text_color)),
+                        ft.Column(controls=[
+                            ft.Text(f"{fuel_name} Sold Today", size=11, color="#666666"),
+                            ft.Text(f"{liters:,.2f} L", size=18, weight=ft.FontWeight.BOLD, color=text_color),
+                        ], spacing=2, tight=True),
+                    ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ),
+            ], spacing=0, vertical_alignment=ft.CrossAxisAlignment.STRETCH),
+            bgcolor=WHITE, border_radius=8, height=76, expand=True,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            shadow=ft.BoxShadow(blur_radius=4, color="#00000015", offset=ft.Offset(0, 2))
+        )
+
+    fuel_summary_row = ft.Row(controls=[], spacing=12)
+    fuel_summary_wrap = ft.Container(content=fuel_summary_row, padding=ft.Padding.only(bottom=12))
+
+    def load_daily_summary():
+        def bg():
+            try:
+                data = get_daily_liters_summary(auth)
+                cards = []
+                for i, fb in enumerate(data.get("fuel_breakdown", [])):
+                    name = fb.get("fuel_name", "Fuel")
+                    palette = next((c for k, c in FUEL_CARD_COLORS.items() if k in name.lower()), FUEL_CARD_FALLBACKS[i % len(FUEL_CARD_FALLBACKS)])
+                    cards.append(make_fuel_sold_card(name, float(fb.get("liters_sold", 0) or 0), palette))
+                if cards:
+                    fuel_summary_row.controls = cards
+            except Exception as ex:
+                print("load_daily_summary error:", ex)
+            try: page.update()
+            except: pass
+        page.run_thread(bg)
+
     tab_fuel = ft.Container(padding=ft.Padding.symmetric(vertical=10, horizontal=16), ink=True)
     tab_oil = ft.Container(padding=ft.Padding.symmetric(vertical=10, horizontal=16), ink=True)
     tabs_row = ft.Row([tab_fuel, tab_oil], spacing=12)
 
     def refresh_tabs(update_page=True):
         is_fuel = selected["tab"] == "fuel"
+        fuel_summary_wrap.visible = is_fuel
         dipstick_btn.visible = is_fuel
         add_oil_btn.visible = not is_fuel
         restock_oil_btn.visible = not is_fuel  
@@ -641,6 +807,7 @@ def inventory_page(page: ft.Page, auth: dict):
         tab_oil.border = ft.Border.only(bottom=ft.BorderSide(2, DARK_RED if not is_fuel else ft.Colors.TRANSPARENT))
 
         if is_fuel:
+            load_daily_summary()
             load_fuels()  
         else:
             load_oils()  
@@ -675,6 +842,6 @@ def inventory_page(page: ft.Page, auth: dict):
         bgcolor=DARK_RED, padding=ft.Padding.symmetric(vertical=14, horizontal=24),
     )
 
-    body = ft.Container(expand=True, padding=24, content=ft.Column([title_row, ft.Container(height=12), tabs_row, ft.Container(height=12), content_area], spacing=0, expand=True))
+    body = ft.Container(expand=True, padding=24, content=ft.Column([title_row, ft.Container(height=12), tabs_row, ft.Container(height=12), fuel_summary_wrap, content_area], spacing=0, expand=True))
 
     return ft.Column(spacing=0, expand=True, controls=[header, body, footer])
