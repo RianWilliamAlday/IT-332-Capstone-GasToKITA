@@ -1,4 +1,4 @@
-import subprocess, threading, time, sys, os, socket
+import subprocess, threading, time, sys, os, socket, inspect
 from pathlib import Path
 import flet as ft
 import httpx, asyncio
@@ -47,22 +47,158 @@ async def wait_for_backend(page, max_wait=20):
             await asyncio.sleep(0.5)
     return False
 
-def build_login_view(page: ft.Page, auth: dict):
-    password_field = ft.TextField(hint_text="Enter your password", password=True, can_reveal_password=True, border_radius=25, border_color="black", bgcolor="white", width=330, height=50)
-    status_text = ft.Text("", color=RED, size=14)
+async def google_sign_in(page, api_url: str, role: str = "admin", timeout: int = 120) -> dict:
+    """Asks the backend for a Google sign-in URL, opens it in the browser,
+    then polls the backend until the login finishes. Returns the token response."""
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.get(f"{api_url}/api/auth/google/start", params={"role": role})
+        r.raise_for_status()
+        info = r.json()
 
-    async def login(e):
-        if not password_field.value:
-            status_text.value = "Password required"; page.update(); return
-        e.control.disabled = True
-        try:
-            e.control.content = ft.ProgressRing(width=18, height=18, color="white")
-        except:
-            e.control.text = "Logging in..."
+        res = page.launch_url(info["url"])
+        if inspect.isawaitable(res):
+            await res
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            await asyncio.sleep(1.5)
+            p = await c.get(f"{api_url}/api/auth/google/poll/{info['state']}")
+            if p.status_code == 404:
+                raise RuntimeError("Login expired")
+            data = p.json()
+            if data["status"] == "ok":
+                return data
+            if data["status"] == "error":
+                raise RuntimeError(data["detail"])
+    raise RuntimeError("Timed out waiting for Google sign-in")
+
+def build_login_view(page: ft.Page, auth: dict):
+    is_signup_mode = False
+
+    status_text = ft.Text("", color=RED, size=14)
+    title_text = ft.Text("Admin Login", size=28, weight=ft.FontWeight.BOLD, color="white")
+    btn_text = ft.Text("Login", size=18, weight=ft.FontWeight.BOLD, color="white")
+    toggle_text = ft.Text("Don't have an admin account? Sign Up", weight=ft.FontWeight.BOLD, color="#1877F2", size=13)
+
+    name_field = ft.TextField(
+        label="USERNAME",
+        label_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+        hint_text="Enter your username",
+        hint_style=ft.TextStyle(color=ft.Colors.WHITE38),
+        filled=True,
+        fill_color=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
+        color=ft.Colors.WHITE,
+        border_color=ft.Colors.TRANSPARENT,
+        focused_border_color=RED,
+        cursor_color=ft.Colors.WHITE,
+        border_radius=12,
+        width=330,
+        height=50,
+        text_style=ft.TextStyle(size=14, color=ft.Colors.WHITE),
+        visible=False
+    )
+
+    email_field = ft.TextField(
+        label="EMAIL ADDRESS",
+        label_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+        hint_text="Enter your email",
+        hint_style=ft.TextStyle(color=ft.Colors.WHITE38),
+        keyboard_type=ft.KeyboardType.EMAIL,
+        filled=True,
+        fill_color=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
+        color=ft.Colors.WHITE,
+        border_color=ft.Colors.TRANSPARENT,
+        focused_border_color=RED,
+        cursor_color=ft.Colors.WHITE,
+        border_radius=12,
+        width=330,
+        height=50,
+        text_style=ft.TextStyle(size=14, color=ft.Colors.WHITE),
+    )
+    
+    password_field = ft.TextField(
+        label="PASSWORD",
+        label_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+        hint_text="Enter your password",
+        hint_style=ft.TextStyle(color=ft.Colors.WHITE38),
+        password=True,
+        can_reveal_password=True,
+        filled=True,
+        fill_color=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
+        color=ft.Colors.WHITE,
+        border_color=ft.Colors.TRANSPARENT,
+        focused_border_color=RED,
+        cursor_color=ft.Colors.WHITE,
+        border_radius=12,
+        width=330,
+        height=50,
+        text_style=ft.TextStyle(size=14, color=ft.Colors.WHITE),
+    )
+
+    def switch_to_signup():
+        nonlocal is_signup_mode
+        if not is_signup_mode:
+            is_signup_mode = True
+            title_text.value = "Admin Sign Up"
+            btn_text.value = "Create Admin"
+            toggle_text.value = "Already have an admin account? Login"
+            name_field.visible = True
+            login_card.height = 510
+
+    async def login_google(e=None):
+        status_text.value = "Connecting to Google..."
         page.update()
         try:
+            data = await google_sign_in(page, API_URL, role="admin")
+        except Exception as ex:
+            status_text.value = f"Google login failed: {ex}"
+            page.update()
+            return
+
+        token = data.get("access_token")
+        user_data = data.get("user") or {}
+
+        if token and user_data:
+            auth["token"] = token
+            auth["access_token"] = token
+            auth["name"] = user_data.get("name", "Admin")
+            from pages.admin_dashboard import dashboard_page
+            page.controls.clear()
+            page.add(dashboard_page(page, auth))
+            page.update()
+            return
+
+        google_email = data.get("email") or user_data.get("email", "")
+        google_name = data.get("name") or user_data.get("name", "")
+
+        switch_to_signup()
+        if google_name:
+            name_field.value = google_name
+        if google_email:
+            email_field.value = google_email
+
+        status_text.value = "Google profile loaded! Set a password to create admin account."
+        page.update()
+
+    async def handle_auth_action(e=None):
+        if not email_field.value or not password_field.value or (is_signup_mode and not name_field.value):
+            status_text.value = "All fields are required"
+            page.update()
+            return
+
+        login_btn.disabled = True
+        login_btn.content = ft.ProgressRing(width=18, height=18, color="white")
+        page.update()
+
+        endpoint = f"{API_URL}/api/auth/register" if is_signup_mode else f"{API_URL}/api/auth/admin/login"
+        payload = {"email": email_field.value, "password": password_field.value}
+        if is_signup_mode:
+            payload["name"] = name_field.value
+            payload["role"] = "ADMIN"
+
+        try:
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(f"{API_URL}/api/auth/admin/login", json={"password": password_field.value})
+                resp = await client.post(endpoint, json=payload)
             if resp.status_code == 200:
                 data = resp.json()
                 auth["token"] = data.get("access_token")
@@ -73,24 +209,84 @@ def build_login_view(page: ft.Page, auth: dict):
                 page.add(dashboard_page(page, auth))
                 page.update()
             else:
-                status_text.value = "Incorrect password"
+                detail = resp.json().get("detail", "Authentication failed")
+                status_text.value = str(detail)
         except Exception as ex:
             status_text.value = f"Connection error: {ex}"
         finally:
+            login_btn.disabled = False
+            login_btn.content = btn_text
+            page.update()
+
+    def toggle_mode(e):
+        nonlocal is_signup_mode
+        is_signup_mode = not is_signup_mode
+        title_text.value = "Admin Sign Up" if is_signup_mode else "Admin Login"
+        btn_text.value = "Create Admin" if is_signup_mode else "Login"
+        toggle_text.value = "Already have an admin account? Login" if is_signup_mode else "Don't have an admin account? Sign Up"
+        name_field.visible = is_signup_mode
+        login_card.height = 510 if is_signup_mode else 440
+        status_text.value = ""
+        page.update()
+
+    async def login_google(e=None):
+            status_text.value = "Complete sign-in in your browser..."
+            page.update()
             try:
-                e.control.disabled = False
-                e.control.content = ft.Text("Login", size=20, weight=ft.FontWeight.BOLD, color="white")
+                data = await google_sign_in(page, API_URL, role="admin")
+            except Exception as ex:
+                status_text.value = f"Google login failed: {ex}"
                 page.update()
-            except: pass
+                return
+    
+            auth["token"] = data.get("access_token")
+            auth["access_token"] = data.get("access_token")
+            auth["name"] = data.get("name", "Admin")
+            from pages.admin_dashboard import dashboard_page
+            page.controls.clear()
+            page.add(dashboard_page(page, auth))
+            page.update()
+
+    email_field.on_submit = handle_auth_action
+    password_field.on_submit = handle_auth_action
+    name_field.on_submit = handle_auth_action
 
     login_btn = ft.Container(
-        width=130, height=45, bgcolor=RED, border_radius=25, ink=True, on_click=login,
-        alignment=ft.Alignment.CENTER, content=ft.Text("Login", size=20, weight=ft.FontWeight.BOLD, color="white")
+        width=330, 
+        height=48, 
+        bgcolor=RED, 
+        border_radius=12, 
+        ink=True, 
+        on_click=handle_auth_action,
+        alignment=ft.Alignment.CENTER, 
+        content=btn_text
+    )
+
+    google_btn = ft.Container(
+        width=330,
+        height=45,
+        border_radius=25,
+        clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        bgcolor=ft.Colors.with_opacity(0.85, ft.Colors.WHITE),
+        blur=ft.Blur(5, 5, ft.BlurTileMode.MIRROR),
+        content=ft.OutlinedButton(
+            content="Sign in with Google",
+            icon=ft.Icons.LOGIN,
+            width=330,
+            height=45,
+            on_click=login_google,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.TRANSPARENT,
+                color="black",
+                shape=ft.RoundedRectangleBorder(radius=25),
+                side=ft.BorderSide(1, "black")
+            )
+        )
     )
 
     login_card = ft.Container(
         width=460,
-        height=360,
+        height=440,
         border_radius=25,
         padding=25,
         bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
@@ -99,15 +295,16 @@ def build_login_view(page: ft.Page, auth: dict):
         shadow=ft.BoxShadow(blur_radius=20, color=ft.Colors.with_opacity(0.2, ft.Colors.BLACK)),
         content=ft.Column(
             horizontal_alignment=ft.CrossAxisAlignment.CENTER, 
-            spacing=18, 
+            spacing=12, 
             controls=[
-                ft.Text("Admin Login", size=32, weight=ft.FontWeight.BOLD, color="white"),
-                ft.Text("Please enter your password", size=14, text_align=ft.TextAlign.CENTER, color=ft.Colors.with_opacity(0.8, "white")),
-                ft.Column(spacing=8, controls=[
-                    ft.Text("Password:", weight=ft.FontWeight.BOLD, color="white"), 
-                    password_field
-                ]),
+                title_text,
+                name_field,
+                email_field,
+                password_field,
                 login_btn, 
+                ft.GestureDetector(content=toggle_text, on_tap=toggle_mode),
+                ft.Row([ft.Container(expand=True, height=1, bgcolor="white"), ft.Text(" OR ", color="white"), ft.Container(expand=True, height=1, bgcolor="white")], alignment=ft.MainAxisAlignment.CENTER, width=330),
+                google_btn,
                 status_text,
             ]
         ),
@@ -155,7 +352,7 @@ def build_login_view(page: ft.Page, auth: dict):
     )
 
 async def main(page: ft.Page):
-    page.title = "GasToKITA - Admin"
+    page.title = "GAStoKITA - Admin"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.bgcolor = LIGHT_GRAY
     page.padding = 0
