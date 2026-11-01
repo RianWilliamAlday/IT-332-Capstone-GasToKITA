@@ -280,6 +280,45 @@ async def main(page: ft.Page):
     name_field.on_submit = handle_auth_action
     password_field.on_submit = handle_auth_action
 
+    email_field = ft.TextField(
+        label="EMAIL ADDRESS",
+        label_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+        hint_text="Enter your email",
+        hint_style=ft.TextStyle(color=ft.Colors.WHITE38),
+        keyboard_type=ft.KeyboardType.EMAIL,
+        filled=True,
+        fill_color=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
+        color=ft.Colors.WHITE,
+        border_color=ft.Colors.TRANSPARENT,
+        focused_border_color=RED,
+        cursor_color=ft.Colors.WHITE,
+        border_radius=12,
+        width=330,
+        height=50,
+        text_style=ft.TextStyle(size=14, color=ft.Colors.WHITE),
+    )
+    
+    password_field = ft.TextField(
+        label="PASSWORD",
+        label_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+        hint_text="Enter your password",
+        hint_style=ft.TextStyle(color=ft.Colors.WHITE38),
+        password=True,
+        can_reveal_password=True,
+        filled=True,
+        fill_color=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
+        color=ft.Colors.WHITE,
+        border_color=ft.Colors.TRANSPARENT,
+        focused_border_color=RED,
+        cursor_color=ft.Colors.WHITE,
+        border_radius=12,
+        width=330,
+        height=50,
+        text_style=ft.TextStyle(size=14, color=ft.Colors.WHITE),
+        on_submit=login_employee
+    )
+    
+    status_text = ft.Text("", color="white", size=14)
     header = ft.Container(bgcolor=RED, height=100, padding=20, content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[ft.Text("GAStoKITA", size=28, weight=ft.FontWeight.BOLD, color="white"), ft.Row(spacing=15, controls=[ft.Text("U-Fuel", size=28, weight=ft.FontWeight.BOLD, color="white"), ft.Container(width=70, height=70, bgcolor="white", border_radius=12, content=ft.Image(src="u-fuel_logo.jpg", fit=ft.BoxFit.CONTAIN))])]))
     footer = ft.Container(height=80, bgcolor=RED)
 

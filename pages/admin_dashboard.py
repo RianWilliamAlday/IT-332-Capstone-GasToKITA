@@ -16,27 +16,6 @@ DARK_GREEN  = "#2E7D32"
 
 BASE_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 
-def open_dialog_compat(page: ft.Page, dialog):
-    if hasattr(page, "open_dialog"):
-        page.open_dialog(dialog)
-    elif hasattr(page, "show_dialog"):
-        page.show_dialog(dialog)
-    else:
-        page.dialog = dialog
-        dialog.open = True
-        page.update()
-
-def close_dialog_compat(page: ft.Page):
-    if hasattr(page, "close_dialog"):
-        try: page.close_dialog(); return
-        except: pass
-    if hasattr(page, "dialog") and page.dialog:
-        page.dialog.open = False
-        page.update()
-    if hasattr(page, "pop_dialog"):
-        try: page.pop_dialog()
-        except: pass
-
 def animated_fuel_stat_card(page: ft.Page, auth: dict):
     fuel_name = ft.Text("Loading...", color=TEXT_WHITE, size=11, weight=ft.FontWeight.BOLD)
     stock_value = ft.Text("--L / --L", color=TEXT_WHITE, size=22, weight=ft.FontWeight.BOLD)
@@ -145,7 +124,6 @@ def action_button(label: str, on_click=None) -> ft.Container:
     )
 
 def animated_daily_sales_card(page: ft.Page, auth: dict):
-    # Dynamic header tag and value controls
     sales_category = ft.Text("TOTAL SALES", color=TEXT_WHITE, size=11, weight=ft.FontWeight.BOLD)
     sales_value = ft.Text("₱ 0.00", color=TEXT_WHITE, size=22, weight=ft.FontWeight.BOLD)
     sub_label = ft.Text("Transactions", color=TEXT_WHITE, size=10)
@@ -163,7 +141,6 @@ def animated_daily_sales_card(page: ft.Page, auth: dict):
         ft.Row([sub_label, sub_value], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
     ], spacing=10)
 
-    # Replicates animated fuel stat card transition properties
     card = ft.Container(
         content=anim_content,
         bgcolor=DARK_RED, border_radius=10, padding=14, expand=True,
@@ -184,7 +161,6 @@ def animated_daily_sales_card(page: ft.Page, auth: dict):
         nonlocal modes_data
         try:
             from pages.api_client import get_revenue_summary
-            # days=1 queries daily revenue summary
             res = get_revenue_summary(auth, days=1)
             f = res.get("fuel", {})
             o = res.get("oil", {})
@@ -232,16 +208,14 @@ def animated_daily_sales_card(page: ft.Page, auth: dict):
             if len(modes_data) <= 1:
                 continue
 
-            # Scale and fade out
             card.opacity = 0.0
             card.scale = ft.Scale(0.93)
             page.update()
-            await asyncio.sleep(0.😎
+            await asyncio.sleep(0.8)
 
             idx = (idx + 1) % len(modes_data)
             update_card_view(modes_data[idx])
 
-            # Scale and fade in
             card.opacity = 1.0
             card.scale = ft.Scale(1.0)
             page.update()
@@ -347,10 +321,8 @@ def dashboard_page(page: ft.Page, auth: dict):
     stats_row = ft.Row([
         animated_fuel_stat_card(page, auth),
         animated_daily_sales_card(page, auth),
-        stat_card(icon=ft.Icons.ATTACH_MONEY, title="Daily Net Profit", value="₱ 5,000", period_label="daily"),
     ], spacing=16)
 
-    # --- 1. SCROLLABLE QUICK ACTIONS ---
     quick_actions_list = ft.Column([
         action_button("View Analytics", on_click=go_analytics),
         action_button("View Inventory", on_click=go_inventory),
@@ -364,7 +336,7 @@ def dashboard_page(page: ft.Page, auth: dict):
         ft.Text("Quick Actions", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD),
         ft.Container(height=4),
         quick_actions_list
-    ], spacing=0, tight=True)
+    ], spacing=0, expand=True)
 
     quick_actions = ft.Container(
         content=quick_actions_col, 
@@ -372,33 +344,37 @@ def dashboard_page(page: ft.Page, auth: dict):
         border_radius=10, 
         padding=18, 
         expand=True,
-        height=380  # Fixed height enables internal scrolling
     )
 
-    low_stock_col = ft.Column([
-        ft.Text("Low Stock Alert", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD),
-        ft.Container(height=8),
+    low_stock_title = ft.Text("Low Stock Alert", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD)
+    low_stock_header = ft.Row([low_stock_title], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+    low_stock_list = ft.Column([
         ft.Container(
             content=ft.Row([ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=DARK_GREEN, size=16), ft.Text("Checking stock...", color=TEXT_DARK, size=12, italic=True)], spacing=8),
             bgcolor=LIGHT_CARD, border_radius=6, padding=ft.Padding.symmetric(vertical=10, horizontal=14),
         ),
-    ], spacing=5, tight=True)
+    ], spacing=5, scroll=ft.ScrollMode.AUTO, expand=True)
+    low_stock_footer = ft.Container(
+        visible=False, padding=ft.Padding.only(top=8),
+        content=ft.Container(content=ft.Text("View Inventory →", size=11, color=DARK_RED, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER), border=ft.Border.all(1, DARK_RED), border_radius=6, padding=8, ink=True, on_click=go_inventory),
+    )
+    low_stock_col = ft.Column([low_stock_header, ft.Container(height=8), low_stock_list, low_stock_footer], spacing=0, expand=True)
 
     def render_low_stock(data: dict):
         items = data.get("items", [])
         total = data.get("total_count", 0)
         if total == 0:
-            low_stock_col.controls = [
-                ft.Text("Low Stock Alert", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD),
-                ft.Container(height=8),
+            low_stock_header.controls = [low_stock_title]
+            low_stock_list.controls = [
                 ft.Container(
                     content=ft.Row([ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=DARK_GREEN, size=16), ft.Text("There is no low stock at the moment.", color=DARK_GREEN, size=12, italic=True)], spacing=8),
                     bgcolor=GREEN_ALERT, border_radius=6, padding=ft.Padding.symmetric(vertical=10, horizontal=14),
                 ),
             ]
+            low_stock_footer.visible = False
         else:
             alert_widgets = []
-            for it in items[:5]:
+            for it in items:
                 name = it.get("product_name","")
                 ptype = it.get("product_type","")
                 stock = it.get("current_stock",0)
@@ -421,16 +397,10 @@ def dashboard_page(page: ft.Page, auth: dict):
                         ], spacing=8)
                     )
                 )
-            if total > 5:
-                alert_widgets.append(ft.Text(f"+{total-5} more...", size=10, color=DARK_RED, italic=True))
-            low_stock_col.controls = [
-                ft.Row([ft.Text("Low Stock Alert", color=TEXT_DARK, size=14, weight=ft.FontWeight.BOLD), ft.Container(content=ft.Text(f"{total}", size=11, color=WHITE, weight=ft.FontWeight.BOLD), bgcolor=DARK_RED, border_radius=10, padding=ft.Padding.symmetric(horizontal=8, vertical=2))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                ft.Container(height=8),
-                *alert_widgets,
-                ft.Container(height=6),
-                ft.Container(content=ft.Text("View Inventory →", size=11, color=DARK_RED, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER), border=ft.Border.all(1, DARK_RED), border_radius=6, padding=8, ink=True, on_click=go_inventory)
-            ]
-            
+            low_stock_header.controls = [low_stock_title, ft.Container(content=ft.Text(f"{total}", size=11, color=WHITE, weight=ft.FontWeight.BOLD), bgcolor=DARK_RED, border_radius=10, padding=ft.Padding.symmetric(horizontal=8, vertical=2))]
+            low_stock_list.controls = alert_widgets
+            low_stock_footer.visible = True
+
         try: page.update()
         except: pass
 
@@ -442,9 +412,8 @@ def dashboard_page(page: ft.Page, auth: dict):
 
     low_stock = ft.Container(content=low_stock_col, bgcolor=LIGHT_CARD, border_radius=10, padding=18, expand=True)
 
-    middle_row = ft.Row([quick_actions, low_stock], spacing=16, vertical_alignment=ft.CrossAxisAlignment.START)
+    middle_row = ft.Row([quick_actions, low_stock], spacing=16, vertical_alignment=ft.CrossAxisAlignment.STRETCH, expand=True)
 
-    # Removed body-level scroll so card containers scroll internally
     body = ft.Container(
         bgcolor=BODY_BG, 
         expand=True, 

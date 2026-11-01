@@ -47,6 +47,7 @@ async def wait_for_backend(page, max_wait=20):
             await asyncio.sleep(0.5)
     return False
 
+<<<<<<< HEAD
 async def google_sign_in(page, api_url: str, role: str = "admin", timeout: int = 120) -> dict:
     """Asks the backend for a Google sign-in URL, opens it in the browser,
     then polls the backend until the login finishes. Returns the token response."""
@@ -147,7 +148,24 @@ def build_login_view(page: ft.Page, auth: dict):
 
     async def login_google(e=None):
         status_text.value = "Connecting to Google..."
+=======
+def build_login_view(page: ft.Page, auth: dict):
+    status_text = ft.Text("", color=RED, size=14)
+
+    async def login(e=None):
+        if not email_field.value or not password_field.value:
+            status_text.value = "Email and password required"
+            page.update()
+            return
+            
+        login_btn.disabled = True
+        try:
+            login_btn.content = ft.ProgressRing(width=18, height=18, color="white")
+        except:
+            pass
+>>>>>>> fccf8e94b52dc29def2168b4dc634e0ce73457db
         page.update()
+        
         try:
             data = await google_sign_in(page, API_URL, role="admin")
         except Exception as ex:
@@ -198,7 +216,17 @@ def build_login_view(page: ft.Page, auth: dict):
 
         try:
             async with httpx.AsyncClient(timeout=10) as client:
+<<<<<<< HEAD
                 resp = await client.post(endpoint, json=payload)
+=======
+                resp = await client.post(
+                    f"{API_URL}/api/auth/admin/login", 
+                    json={
+                        "email": email_field.value, 
+                        "password": password_field.value
+                    }
+                )
+>>>>>>> fccf8e94b52dc29def2168b4dc634e0ce73457db
             if resp.status_code == 200:
                 data = resp.json()
                 auth["token"] = data.get("access_token")
@@ -209,8 +237,12 @@ def build_login_view(page: ft.Page, auth: dict):
                 page.add(dashboard_page(page, auth))
                 page.update()
             else:
+<<<<<<< HEAD
                 detail = resp.json().get("detail", "Authentication failed")
                 status_text.value = str(detail)
+=======
+                status_text.value = "Invalid email or password"
+>>>>>>> fccf8e94b52dc29def2168b4dc634e0ce73457db
         except Exception as ex:
             status_text.value = f"Connection error: {ex}"
         finally:
@@ -233,9 +265,14 @@ def build_login_view(page: ft.Page, auth: dict):
             status_text.value = "Complete sign-in in your browser..."
             page.update()
             try:
+<<<<<<< HEAD
                 data = await google_sign_in(page, API_URL, role="admin")
             except Exception as ex:
                 status_text.value = f"Google login failed: {ex}"
+=======
+                login_btn.disabled = False
+                login_btn.content = ft.Text("Login", size=18, weight=ft.FontWeight.BOLD, color="white")
+>>>>>>> fccf8e94b52dc29def2168b4dc634e0ce73457db
                 page.update()
                 return
     
@@ -250,6 +287,45 @@ def build_login_view(page: ft.Page, auth: dict):
     email_field.on_submit = handle_auth_action
     password_field.on_submit = handle_auth_action
     name_field.on_submit = handle_auth_action
+
+    email_field = ft.TextField(
+        label="EMAIL ADDRESS",
+        label_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+        hint_text="Enter your email",
+        hint_style=ft.TextStyle(color=ft.Colors.WHITE38),
+        keyboard_type=ft.KeyboardType.EMAIL,
+        filled=True,
+        fill_color=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
+        color=ft.Colors.WHITE,
+        border_color=ft.Colors.TRANSPARENT,
+        focused_border_color=RED,
+        cursor_color=ft.Colors.WHITE,
+        border_radius=12,
+        width=330,
+        height=50,
+        text_style=ft.TextStyle(size=14, color=ft.Colors.WHITE),
+        on_submit=login,
+    )
+    
+    password_field = ft.TextField(
+        label="PASSWORD",
+        label_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+        hint_text="Enter your password",
+        hint_style=ft.TextStyle(color=ft.Colors.WHITE38),
+        password=True,
+        can_reveal_password=True,
+        filled=True,
+        fill_color=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
+        color=ft.Colors.WHITE,
+        border_color=ft.Colors.TRANSPARENT,
+        focused_border_color=RED,
+        cursor_color=ft.Colors.WHITE,
+        border_radius=12,
+        width=330,
+        height=50,
+        text_style=ft.TextStyle(size=14, color=ft.Colors.WHITE),
+        on_submit=login,
+    )
 
     login_btn = ft.Container(
         width=330, 

@@ -1,17 +1,14 @@
 import flet as ft
-import time
-import threading
-import io
-import base64
-from pages.api_client import get_fuels, get_oils, PUMP_MAP, create_gcash_dialog_checkout, check_gcash_status, manual_confirm_gcash
+import io, base64, time
+from pages.api_client_m import (
+    get_fuels, get_oils, PUMP_MAP,
+    create_gcash_dialog_checkout, check_gcash_status, manual_confirm_gcash,
+)
+from pages.sidebar_m import Sidebar
 
-RED = "#A61E22"
-LIGHT_GRAY = "#E9E9E9"
-WHITE = "white"
-TEXT_WHITE  = "#FFFFFF"
-COLOR_REGULAR = "#0CA940"
-COLOR_PREMIUM = "#E3242B"
-COLOR_DIESEL = "#EBB328"
+MOBILE_RED = "#8B0000"
+GREEN = "#2E7D32"
+YELLOW = "#F9A825"
 BAR_GREEN = "#12B347"
 
 FALLBACK_PRICES = {
@@ -73,18 +70,29 @@ def create_fuel_card(title: str, price: float, percentage: float, on_click):
         )
     )
 
-def oil_card_image(oil: dict, box_height: int):
-    """Light-grey rounded image area: product photo if set, else the water-drop icon."""
-    icon = ft.Icon(ft.Icons.WATER_DROP_OUTLINED, size=56, color="black")
-    img_url = oil.get("image_url")
-    content = ft.Image(
-        src=img_url, height=box_height - 16, fit=ft.BoxFit.CONTAIN,
-        error_content=icon,
-    ) if img_url else icon
-    return ft.Container(
-        height=box_height, bgcolor="#F4F4F5", border_radius=14, padding=8,
-        alignment=ft.Alignment(0, 0), content=content,
-    )
+def generate_qr_base64(url: str):
+    if not url:
+        return None
+    try:
+        import qrcode
+        qr = qrcode.QRCode(version=1, box_size=8, border=2)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception as ex:
+        print(f"[QR] qrcode failed ({ex}), trying segno...")
+    try:
+        import segno
+        buf = io.BytesIO()
+        segno.make(url, error="m").save(buf, kind="png", scale=8, border=2)
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception as ex:
+        print(f"[QR] segno failed: {ex}")
+        return None
+
 
 def create_oil_card(oil: dict, on_click):
     brand = oil.get("brand", "")
@@ -136,43 +144,46 @@ def build_multi_page(page: ft.Page, auth: dict):
     page.bgcolor = LIGHT_GRAY
     page.padding = 0
 
+    sidebar = Sidebar(page, auth, active="pos")
+
     if "cart" not in auth:
         auth["cart"] = {"fuel_items": [], "oil_items": []}
     cart = auth["cart"]
 
-    cart_items_column = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
-    total_text = ft.Text("₱0.00", size=24, weight=ft.FontWeight.BOLD, color=RED)
-    
-    fuel_layout_column = ft.Column(spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
-    oil_layout_column = ft.Column(spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
-    
-    left_content_area = ft.Container(
-        expand=True, 
-        padding=20,
-        alignment=ft.Alignment(0, -1),
-        content=ft.ProgressRing(width=40, color=RED)
-    )
+    state = {"tab": "fuel"}
 
-    def show_snack(msg, color=RED):
+    def show_snack(msg, color=MOBILE_RED):
         page.show_dialog(ft.SnackBar(content=ft.Text(msg), bgcolor=color))
 
     def go_back(e):
         auth["cart"] = {"fuel_items": [], "oil_items": []}
-        from pages.select_pa import pa_selection
+        from pages.select_pa_m import build_pa_page_mobile
         page.controls.clear()
-        page.add(pa_selection(page, auth))
+        page.add(build_pa_page_mobile(page, auth))
         page.update()
 
-    async def go_logout(e):
-        await page.shared_preferences.remove("gastokita.auth_token")
-        await page.shared_preferences.remove("gastokita.user_json")
-        auth.clear()
-        auth.update({"token": None, "role": None, "user": None})
-        page.controls.clear()
-        from app import main as app_main
-        await app_main(page)
-        page.update()
-    
+    cart_items_column = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO)
+    sheet_total_text = ft.Text("₱0.00", size=22, weight=ft.FontWeight.BOLD, color=MOBILE_RED)
+    badge_text = ft.Text("0", size=11, weight=ft.FontWeight.BOLD, color=MOBILE_RED)
+    toggle_holder = ft.Container()
+    body_holder = ft.Container(expand=True, padding=ft.Padding.symmetric(horizontal=20))
+
+    def cart_row(title, subtitle, on_remove):
+        return ft.Container(
+            bgcolor=GRAY_BG, border_radius=10, padding=ft.Padding.only(left=12, top=6, bottom=6, right=4),
+            content=ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Column(spacing=2, expand=True, controls=[
+                        ft.Text(title, weight=ft.FontWeight.BOLD, size=13, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                        ft.Text(subtitle, size=11, color="grey"),
+                    ]),
+                    ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_color="red", icon_size=20, on_click=on_remove),
+                ],
+            ),
+        )
+
     def refresh_cart_ui():
         cart_items_column.controls.clear()
         grand_total = 0.0
@@ -225,10 +236,251 @@ def build_multi_page(page: ft.Page, auth: dict):
         total_text.value = f"₱{grand_total:.2f}"
         page.update()
 
-    refresh_cart_ui()
+    def proceed_checkout(e):
+        num_fuel = len(cart["fuel_items"])
+        num_oil = len(cart["oil_items"])
+        if num_fuel == 0 and num_oil == 0:
+            show_snack("Cart is empty")
+            return
 
-    def open_fuel_modal(fuel_pump_name: str, price: float, pump_id: int):
-        fuel_clean_name = fuel_pump_name.split()[0]
+        auth["cart"] = cart
+
+        if num_fuel == 1 and num_oil == 0:
+            f = cart["fuel_items"][0]
+            unit_p = f.get("unit_price") or (f["total"] / f["liters_sold"] if f["liters_sold"] else 0)
+            tx = {
+                "label": f["fuel_name"], "details": f"{f['liters_sold']:.3f}L x ₱{unit_p:.2f}",
+                "total": f["total"], "liters": f["liters_sold"], "pump_id": f["pump_id"],
+                "fuel_name": f["fuel_name"], "type": "fuel", "payment_method": "cash",
+            }
+        elif num_fuel == 0 and num_oil == 1:
+            o = cart["oil_items"][0]
+            tx = {
+                "label": o["oil_name"], "details": f"{o['quantity']} x ₱{o['price']:.2f}",
+                "total": o["total"], "quantity": o["quantity"], "oil_id": o["oil_id"],
+                "type": "oil", "payment_method": "cash",
+            }
+        else:
+            tx = {
+                "label": f"({num_fuel + num_oil} items)", "details": "Multi-item Checkout",
+                "total": cart_total(), "type": "multi", "payment_method": "cash",
+            }
+
+        page.pop_dialog()
+        from pages.pos_m import build_pos_page_mobile
+        page.controls.clear()
+        page.add(build_pos_page_mobile(page, auth, tx))
+        page.update()
+
+    def build_paid_tx(prod_type, total_amt, sale_id):
+        """The tx dict the change page expects, built from the current cart."""
+        if prod_type == "fuel":
+            f = cart["fuel_items"][0]
+            unit_p = f.get("unit_price") or (f["total"] / f["liters_sold"] if f["liters_sold"] else 0)
+            tx = {
+                "label": f["fuel_name"], "details": f"{f['liters_sold']:.3f}L x ₱{unit_p:.2f}",
+                "total": total_amt, "liters": f["liters_sold"], "pump_id": f["pump_id"],
+                "fuel_name": f["fuel_name"], "type": "fuel",
+            }
+        elif prod_type == "oil":
+            o = cart["oil_items"][0]
+            tx = {
+                "label": o["oil_name"], "details": f"{o['quantity']} x ₱{o['price']:.2f}",
+                "total": total_amt, "quantity": o["quantity"], "oil_id": o["oil_id"], "type": "oil",
+            }
+        else:
+            tx = {
+                "label": f"({cart_count()} items)", "details": f"GCash PAID - ₱{total_amt:.2f}",
+                "total": total_amt, "type": "multi",
+            }
+        tx.update({"payment_method": "gcash", "sale_id": sale_id, "is_paid": True})
+        return tx
+
+    def finish_gcash(prod_type, total_amt, sale_id, result):
+        tx = build_paid_tx(prod_type, total_amt, sale_id)
+        auth["cart"] = {"fuel_items": [], "oil_items": []}
+        try:
+            from pages.change_m import build_change_page_mobile
+        except ImportError:
+            receipt = (result or {}).get("receipt_no", "PAID")
+            show_snack(f"GCash payment confirmed ({receipt})", "#2E7D32")
+            go_back(None)
+            return
+        page.controls.clear()
+        page.add(build_change_page_mobile(page, auth, tx, paid=total_amt, change=0, sale=result, tx_type=prod_type))
+        page.update()
+
+    def gcash_qr_dialog(gcash_data: dict, grand_total: float, prod_type: str = "multi"):
+        total_amt = float(gcash_data.get("total_amount", grand_total))
+        sale_id = gcash_data.get("transaction_ref") or gcash_data.get("sale_id") or gcash_data.get("oil_sale_id")
+        checkout_id = gcash_data.get("checkout_id")
+        checkout_url = gcash_data.get("checkout_url", "")
+
+        state = {"active": True, "busy": False, "sale_id": sale_id}
+
+        qr_b64 = generate_qr_base64(checkout_url)
+        if qr_b64:
+            qr_image = ft.Image(src=qr_b64, width=220, height=220, fit=ft.BoxFit.CONTAIN)
+        else:
+            qr_image = ft.Text("QR failed, use the link below", size=11, color="grey")
+
+        status_text = ft.Text("Waiting for GCash payment...", color=GCASH_BLUE, size=12,
+                              weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)
+
+        def close_all(e=None):
+            state["active"] = False
+            page.pop_dialog()
+
+        def finalize():
+            """Confirm the sale on the backend, then go to the change page. Safe to call twice."""
+            if state["busy"]:
+                return
+            state["busy"] = True
+            try:
+                status_text.value = "Confirming payment..."
+                page.update()
+                result = manual_confirm_gcash(auth, sale_id, product_type=prod_type)
+            except Exception as ex:
+                status_text.value = f"Confirm failed: {ex}"
+                page.update()
+                state["busy"] = False
+                return
+            state["active"] = False
+            status_text.value = f"Paid! {(result or {}).get('receipt_no', '')}".strip()
+            page.update()
+            time.sleep(0.8)
+            page.pop_dialog()
+            finish_gcash(prod_type, total_amt, state["sale_id"], result)
+
+        def auto_poll():
+            while state["active"]:
+                time.sleep(3)
+                if not state["active"]:
+                    break
+                try:
+                    status = check_gcash_status(auth, checkout_id)
+                    if status.get("is_paid"):
+                        state["sale_id"] = status.get("sale_id") or sale_id
+                        finalize()
+                except Exception as ex:
+                    print(f"[GCash Multi Poll] {ex}")
+
+        page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"GCash - ₱{total_amt:.2f}", weight=ft.FontWeight.BOLD),
+            content=ft.Column(
+                tight=True, spacing=10, width=260, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Text("Fuel / Oil Sale" if prod_type != "multi" else "Multi-Item Sale", size=12, color="grey"),
+                    ft.Container(content=qr_image, alignment=ft.Alignment.CENTER, bgcolor="white", border_radius=8, padding=4),
+                    ft.TextButton("Open GCash Checkout", url=checkout_url, style=ft.ButtonStyle(color=GCASH_BLUE)),
+                    status_text,
+                ],
+            ),
+            actions=[
+                ft.TextButton("Cancel", on_click=close_all),
+                ft.TextButton("Manual Confirm", on_click=lambda e: page.run_thread(finalize)),
+            ],
+        ))
+        page.run_thread(auto_poll)
+
+    def confirm_gcash_multi(e):
+        num_fuel = len(cart["fuel_items"])
+        num_oil = len(cart["oil_items"])
+        if num_fuel == 0 and num_oil == 0:
+            show_snack("Cart is empty")
+            return
+        grand_total = cart_total()
+        if grand_total < GCASH_MIN:
+            show_snack(f"GCash minimum total is ₱{GCASH_MIN:.2f} (Current: ₱{grand_total:.2f})")
+            return
+
+        attendant_name = auth.get("selected_attendant") or (auth.get("user") or {}).get("name") or "Attendant 1"
+
+        page.pop_dialog()
+        page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Creating GCash Checkout..."),
+            content=ft.Column(tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                              controls=[ft.ProgressRing(color=MOBILE_RED), ft.Text("Contacting PayMongo...")]),
+        ))
+
+        def do_create():
+            try:
+                if num_fuel == 1 and num_oil == 0:
+                    f = cart["fuel_items"][0]
+                    gcash_data = create_gcash_dialog_checkout(
+                        auth, product_type="fuel", attendant_name=attendant_name,
+                        pump_id=f["pump_id"], liters_sold=f["liters_sold"],
+                    )
+                    prod_type = "fuel"
+                elif num_fuel == 0 and num_oil == 1:
+                    o = cart["oil_items"][0]
+                    gcash_data = create_gcash_dialog_checkout(
+                        auth, product_type="oil", attendant_name=attendant_name,
+                        oil_product_id=o["oil_id"], quantity=o["quantity"],
+                    )
+                    prod_type = "oil"
+                else:
+                    f_items = [{"pump_id": f["pump_id"], "liters_sold": f["liters_sold"]} for f in cart["fuel_items"]]
+                    o_items = [{"oil_product_id": o["oil_id"], "quantity": o["quantity"]} for o in cart["oil_items"]]
+                    gcash_data = create_gcash_dialog_checkout(
+                        auth, product_type="multi", attendant_name=attendant_name,
+                        fuel_items=f_items, oil_items=o_items,
+                    )
+                    prod_type = "multi"
+
+                page.pop_dialog()
+                gcash_qr_dialog(gcash_data, grand_total, prod_type=prod_type)
+            except Exception as ex:
+                error_msg = str(ex)
+                print(f"Multi GCash error: {error_msg}")
+                page.pop_dialog()
+                show_snack(f"GCash failed: {error_msg}")
+
+        page.run_thread(do_create)
+
+    def open_cart_sheet(e=None):
+        refresh_cart_ui()
+        sheet = ft.BottomSheet(
+            show_drag_handle=True,
+            content=ft.Container(
+                padding=ft.Padding.only(left=20, right=20, top=4, bottom=24),
+                content=ft.Column(
+                    tight=True, spacing=12,
+                    controls=[
+                        ft.Text("Cart", size=20, weight=ft.FontWeight.BOLD),
+                        cart_items_column,
+                        ft.Divider(height=1),
+                        ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
+                            ft.Text("Total:", size=16, weight=ft.FontWeight.BOLD),
+                            sheet_total_text,
+                        ]),
+                        ft.Row(spacing=10, controls=[
+                            ft.FilledButton("Cash", bgcolor=MOBILE_RED, color="white", expand=True, height=46, on_click=proceed_checkout),
+                            ft.Button(
+                                style=ft.ButtonStyle(bgcolor=GCASH_BLUE, color="white"),
+                                expand=True, height=46, on_click=confirm_gcash_multi,
+                                content=ft.Row(
+                                    alignment=ft.MainAxisAlignment.CENTER, tight=True, spacing=8,
+                                    controls=[
+                                        ft.Image(src="gcash_logo.png", width=20, height=20, fit=ft.BoxFit.CONTAIN,
+                                                 error_content=ft.Icon(ft.Icons.PAYMENT, size=16, color="white")),
+                                        ft.Text("GCash", weight=ft.FontWeight.BOLD),
+                                    ],
+                                ),
+                            ),
+                        ]),
+                    ],
+                ),
+            ),
+        )
+        page.show_dialog(sheet)
+
+    def open_fuel_dialog(pump_name: str, price: float, stock: float):
+        fuel_clean_name = pump_name.split()[0]
+        pump_id = PUMP_MAP.get(pump_name, 1)
+        lock = {"busy": False}
         liters_field = ft.TextField(label="Liters", keyboard_type=ft.KeyboardType.NUMBER, autofocus=True)
         amount_field = ft.TextField(label="Amount (PHP)", keyboard_type=ft.KeyboardType.NUMBER)
 
@@ -305,68 +557,107 @@ def build_multi_page(page: ft.Page, auth: dict):
             ], tight=True, spacing=10),
             actions=[
                 ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog()),
-                ft.FilledButton("Add to Order", style=ft.ButtonStyle(bgcolor=RED, color="white"), on_click=add_oil)
-            ]
-        )
-        page.show_dialog(dlg)
+                ft.FilledButton("Add to Order", bgcolor=MOBILE_RED, color="white", on_click=add_oil),
+            ],
+        ))
 
-    def render_inventory_items():
-        fuels_data = auth.get("fuels_data", [])
-        fuel_lookup = {f["name"]: f for f in fuels_data}
-        oils_data = auth.get("oils_data", [])
+    def fuel_card(pump_name: str, color: str):
+        base = pump_name.split()[0]
+        fu = next((f for f in auth.get("fuels_data", []) if f["name"] == base), None)
+        price = fu["price"] if fu else FALLBACK.get(base, 60.0)
+        stock = fu["actual_liters"] if fu else 9999
+        pct = fu.get("display_percentage", 100) if fu else 100
 
-        row1_names = ["Regular 1", "Premium 1", "Diesel 1"]
-        row2_names = ["Regular 2", "Premium 2", "Diesel 2"]
-
-        row1_cards = []
-        for p_name in row1_names:
-            base = p_name.split()[0]
-            f = fuel_lookup.get(base)
-            price = f["price"] if f else FALLBACK_PRICES.get(base, 60.0)
-            pct = f.get("display_percentage", 78) if f else (78 if "Regular" in p_name else 63 if "Premium" in p_name else 83)
-            row1_cards.append(create_fuel_card(p_name, price, pct, open_fuel_modal))
-
-        row2_cards = []
-        for p_name in row2_names:
-            base = p_name.split()[0]
-            f = fuel_lookup.get(base)
-            price = f["price"] if f else FALLBACK_PRICES.get(base, 60.0)
-            pct = f.get("display_percentage", 78) if f else (78 if "Regular" in p_name else 63 if "Premium" in p_name else 83)
-            row2_cards.append(create_fuel_card(p_name, price, pct, open_fuel_modal))
-
-        fuel_layout_column.controls = [
-            ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=15, controls=row1_cards),
-            ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=15, controls=row2_cards)
-        ]
-
-        available_oils = [
-            oil for oil in oils_data 
-            if oil.get("stock", 0) > 0
-        ]
-
-        oil_cards = [create_oil_card(oil, open_oil_modal) for oil in available_oils]
-        oil_rows = [
-            ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=15, controls=oil_cards[i:i+3])
-            for i in range(0, len(oil_cards), 3)
-        ]
-        oil_layout_column.controls = oil_rows
-
-        left_content_area.alignment = ft.Alignment(0, -1)
-        left_content_area.content = ft.Column(
-            scroll=ft.ScrollMode.AUTO, 
-            expand=True, 
-            spacing=20,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            controls=[
-                ft.Text("Pumps / Fuel Types", size=20, weight=ft.FontWeight.BOLD),
-                fuel_layout_column,
-                ft.Divider(height=2, color="#CCCCCC"),
-                ft.Text("Engine Oils & Lubricants", size=20, weight=ft.FontWeight.BOLD),
-                oil_layout_column,
-            ]
+        return ft.Container(
+            content=ft.Column(
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH, spacing=6,
+                controls=[
+                    ft.Text(pump_name, size=13, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER),
+                    ft.Text(f"₱{price:.2f}/L", size=11, color="white", text_align=ft.TextAlign.CENTER),
+                    ft.Text(f"{pct:.0f}%", size=22, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER),
+                    ft.ProgressBar(value=max(0, min(pct, 100)) / 100, color=bar_color(pct), bgcolor="white", bar_height=8, border_radius=4),
+                ],
+            ),
+            bgcolor=color, border_radius=12, expand=True, ink=True,
+            padding=ft.Padding.symmetric(horizontal=12, vertical=16),
+            on_click=lambda e, n=pump_name, p=price, s=stock: open_fuel_dialog(n, p, s),
         )
 
-    def load_multi_data():
+    def oil_card_image(oil: dict, box_height: int):
+        icon = ft.Icon(ft.Icons.WATER_DROP_OUTLINED, size=44, color="black")
+        img_url = oil.get("image_url")
+        content = ft.Image(
+            src=img_url, height=box_height - 12, fit=ft.BoxFit.CONTAIN,
+            error_content=icon,
+        ) if img_url else icon
+        return ft.Container(
+            height=box_height, bgcolor="#F4F4F5", border_radius=12, padding=6,
+            alignment=ft.Alignment.CENTER, content=content,
+        )
+
+    def oil_card(oil: dict):
+        stock = oil["stock"]
+        low = stock <= oil.get("low_stock_threshold", 5)
+
+        card_bg = MOBILE_RED if low else "white"
+        text_main = "white" if low else "#2B2D36"
+        text_sub = "#FFD9DA" if low else "#5F6368"
+        divider_color = "#C97A7A" if low else "#E5E7EB"
+
+        def info_row(label, value):
+            return ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN, spacing=6,
+                controls=[
+                    ft.Text(label, size=11, weight=ft.FontWeight.W_500, color=text_sub),
+                    ft.Text(value, size=11, weight=ft.FontWeight.W_600, color=text_main,
+                            expand=True, text_align=ft.TextAlign.RIGHT,
+                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                ],
+            )
+
+        return ft.Container(
+            content=ft.Column(
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=6,
+                controls=[
+                    oil_card_image(oil, 110),
+                    ft.Text(f"Stock: {stock}", size=16, weight=ft.FontWeight.BOLD, color=text_main),
+                    ft.Text(f"\u20b1{oil['price']:.2f}", size=13, weight=ft.FontWeight.W_600, color=text_main),
+                    ft.Divider(height=1, color=divider_color),
+                    info_row("Brand:", oil.get("brand", "")),
+                    info_row("Item:", oil.get("name", "")),
+                ],
+            ),
+            border=ft.Border.all(1, MOBILE_RED if low else "#E5E7EB"),
+            border_radius=14, bgcolor=card_bg, expand=True, ink=True,
+            padding=ft.Padding.all(10),
+            shadow=ft.BoxShadow(blur_radius=8, color=ft.Colors.with_opacity(0.10, "black"), offset=ft.Offset(0, 3)),
+            on_click=lambda e, o=oil: open_oil_dialog(o),
+        )
+
+    def two_col_grid(cards):
+        rows = []
+        for i in range(0, len(cards), 2):
+            pair = [cards[i]]
+            if i + 1 < len(cards):
+                pair += [ft.Container(width=12), cards[i + 1]]
+            else:
+                pair += [ft.Container(width=12), ft.Container(expand=True)]
+            rows.append(ft.Row(controls=pair, spacing=0))
+        return ft.Column(controls=rows, spacing=12, scroll=ft.ScrollMode.ADAPTIVE, expand=True)
+
+    def build_body():
+        if "fuels_data" not in auth and "oils_data" not in auth:
+            return loading_indicator()
+
+        if state["tab"] == "fuel":
+            pumps = [
+                ("Regular 1", GREEN), ("Regular 2", GREEN),
+                ("Premium 1", MOBILE_RED), ("Premium 2", MOBILE_RED),
+                ("Diesel 1", YELLOW), ("Diesel 2", YELLOW),
+            ]
+        )
+
+    def load_data():
         if "fuels_data" not in auth:
             try:
                 auth["fuels_data"] = get_fuels(auth)
@@ -384,355 +675,58 @@ def build_multi_page(page: ft.Page, auth: dict):
         render_inventory_items()
         page.update()
 
-    page.run_thread(load_multi_data)
-
-    def proceed_checkout(e):
-        num_fuel = len(cart["fuel_items"])
-        num_oil = len(cart["oil_items"])
-
-        if num_fuel == 0 and num_oil == 0:
-            show_snack("Cart is empty", color=RED)
-            return
-
-        auth["cart"] = cart
-
-        if num_fuel == 1 and num_oil == 0:
-            f_item = cart["fuel_items"][0]
-            unit_p = f_item.get("unit_price") or (f_item["total"] / f_item["liters_sold"] if f_item["liters_sold"] else 0)
-            tx = {
-                "label": f_item["fuel_name"],
-                "details": f"{f_item['liters_sold']:.3f}L x ₱{unit_p:.2f}",
-                "total": f_item["total"],
-                "liters": f_item["liters_sold"],
-                "pump_id": f_item["pump_id"],
-                "fuel_name": f_item["fuel_name"],
-                "type": "fuel",
-                "payment_method": "cash"
-            }
-
-        elif num_fuel == 0 and num_oil == 1:
-            o_item = cart["oil_items"][0]
-            tx = {
-                "label": o_item["oil_name"],
-                "details": f"{o_item['quantity']} x ₱{o_item['price']:.2f}",
-                "total": o_item["total"],
-                "quantity": o_item["quantity"],
-                "oil_id": o_item["oil_id"],
-                "type": "oil",
-                "payment_method": "cash"
-            }
-
-        else:
-            grand_total = sum(i["total"] for i in cart["fuel_items"]) + sum(i["total"] for i in cart["oil_items"])
-            tx = {
-                "label": f"({num_fuel + num_oil} items)",
-                "details": "Multi-item Checkout",
-                "total": grand_total,
-                "type": "multi",
-                "payment_method": "cash"
-            }
-
-        from pages.pos import build_pos_page
-        page.controls.clear()
-        page.add(build_pos_page(page, auth, tx))
-        page.update()
-
-    def gcash_qr_dialog(gcash_data: dict, grand_total: float, prod_type: str = "multi"):
-        total_amt = float(gcash_data.get("total_amount", grand_total))
-        sale_id_captured = (
-            gcash_data.get("transaction_ref") or 
-            gcash_data.get("sale_id") or 
-            gcash_data.get("oil_sale_id")
-        )
-        checkout_id_captured = gcash_data.get("checkout_id")
-        checkout_url = gcash_data.get("checkout_url", "")
-
-        qr_data_uri = generate_qr_base64(checkout_url)
-        status_text = ft.Text("Waiting for GCash payment...", color="#007CFF", size=12, weight=ft.FontWeight.BOLD)
-        polling = {"active": True}
-
-        if qr_data_uri:
-            qr_image = ft.Image(src=qr_data_uri, width=220, height=220, fit=ft.BoxFit.CONTAIN)
-        else:
-            qr_image = ft.Text("QR failed, use link below", size=10)
-
-        checkout_link = ft.TextButton(
-            content="Open GCash Checkout",
-            url=checkout_url,
-            style=ft.ButtonStyle(color="#007CFF")
-        )
-
-        def close_all(e=None):
-            polling["active"] = False
-            page.pop_dialog()
-
-        def manual_confirm(e=None):
-            try:
-                result = manual_confirm_gcash(auth, sale_id_captured, product_type=prod_type)
-                status_text.value = f"Manually confirmed: {result.get('receipt_no','PAID')}"
-                page.update()
-                time.sleep(1)
-                polling["active"] = False
-                page.pop_dialog()
-
-                from pages.change import build_change_page
-                
-                if prod_type == "fuel":
-                    f_item = cart["fuel_items"][0]
-                    unit_p = f_item.get("unit_price") or (f_item["total"] / f_item["liters_sold"] if f_item["liters_sold"] else 0)
-                    tx = {
-                        "label": f_item["fuel_name"],
-                        "details": f"{f_item['liters_sold']:.3f}L x ₱{unit_p:.2f}",
-                        "total": total_amt,
-                        "liters": f_item["liters_sold"],
-                        "pump_id": f_item["pump_id"],
-                        "fuel_name": f_item["fuel_name"],
-                        "type": "fuel",
-                        "payment_method": "gcash",
-                        "sale_id": sale_id_captured,
-                        "is_paid": True
-                    }
-                elif prod_type == "oil":
-                    o_item = cart["oil_items"][0]
-                    tx = {
-                        "label": o_item["oil_name"],
-                        "details": f"{o_item['quantity']} x ₱{o_item['price']:.2f}",
-                        "total": total_amt,
-                        "quantity": o_item["quantity"],
-                        "oil_id": o_item["oil_id"],
-                        "type": "oil",
-                        "payment_method": "gcash",
-                        "sale_id": sale_id_captured,
-                        "is_paid": True
-                    }
-                else:
-                    tx = {
-                        "label": f"({len(cart['fuel_items']) + len(cart['oil_items'])} items)",
-                        "details": f"GCash PAID - ₱{total_amt:.2f}",
-                        "total": total_amt,
-                        "type": "multi",
-                        "payment_method": "gcash",
-                        "sale_id": sale_id_captured,
-                        "is_paid": True
-                    }
-
-                auth["cart"] = {"fuel_items": [], "oil_items": []}
-                page.controls.clear()
-                page.add(build_change_page(page, auth, tx, paid=total_amt, change=0, sale=result, tx_type=prod_type))
-                page.update()
-            except Exception as ex:
-                status_text.value = f"Confirm failed: {ex}"
-                page.update()
-
-        def auto_poll():
-            while polling["active"]:
-                time.sleep(3)
-                if not polling["active"]:
-                    break
-                try:
-                    status = check_gcash_status(auth, checkout_id_captured)
-                    if status.get("is_paid"):
-                        def on_paid():
-                            status_text.value = "Paid! Redirecting..."
-                            page.update()
-                            polling["active"] = False
-                            page.pop_dialog()
-
-                            result = manual_confirm_gcash(auth, sale_id_captured, product_type=prod_type)
-
-                            from pages.change import build_change_page
-                            if prod_type == "fuel":
-                                f_item = cart["fuel_items"][0]
-                                unit_p = f_item.get("unit_price") or (f_item["total"] / f_item["liters_sold"] if f_item["liters_sold"] else 0)
-                                tx = {
-                                    "label": f_item["fuel_name"],
-                                    "details": f"{f_item['liters_sold']:.3f}L x ₱{unit_p:.2f}",
-                                    "total": total_amt,
-                                    "liters": f_item["liters_sold"],
-                                    "pump_id": f_item["pump_id"],
-                                    "fuel_name": f_item["fuel_name"],
-                                    "type": "fuel",
-                                    "payment_method": "gcash",
-                                    "sale_id": status.get("sale_id") or sale_id_captured,
-                                    "is_paid": True
-                                }
-                            elif prod_type == "oil":
-                                o_item = cart["oil_items"][0]
-                                tx = {
-                                    "label": o_item["oil_name"],
-                                    "details": f"{o_item['quantity']} x ₱{o_item['price']:.2f}",
-                                    "total": total_amt,
-                                    "quantity": o_item["quantity"],
-                                    "oil_id": o_item["oil_id"],
-                                    "type": "oil",
-                                    "payment_method": "gcash",
-                                    "sale_id": status.get("sale_id") or sale_id_captured,
-                                    "is_paid": True
-                                }
-                            else:
-                                tx = {
-                                    "label": f"({len(cart['fuel_items']) + len(cart['oil_items'])} items)",
-                                    "details": f"GCash PAID - ₱{total_amt:.2f}",
-                                    "total": total_amt,
-                                    "type": "multi",
-                                    "payment_method": "gcash",
-                                    "sale_id": status.get("sale_id") or sale_id_captured,
-                                    "is_paid": True
-                                }
-
-                            auth["cart"] = {"fuel_items": [], "oil_items": []}
-                            page.controls.clear()
-                            page.add(build_change_page(page, auth, tx, paid=total_amt, change=0, sale=result, tx_type=prod_type))
-                            page.update()
-                        page.run_thread(on_paid)
-                        break
-                except Exception as ex:
-                    print(f"[GCash Multi Poll] {ex}")
-
-        qr_dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text(f"GCash - ₱{total_amt:.2f}", weight=ft.FontWeight.BOLD),
-            content=ft.Column(tight=True, spacing=12, width=280, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-                ft.Text("Fuel / Oil Sale" if prod_type != "multi" else "Multi-Item Sale", size=12, color="grey"),
-                ft.Container(alignment=ft.Alignment.CENTER, content=qr_image),
-                checkout_link,
-                status_text
-            ]),
-            actions=[
-                ft.TextButton("Cancel", on_click=close_all),
-                ft.TextButton("Manual Confirm", on_click=manual_confirm),
-            ],
-        )
-        page.show_dialog(qr_dialog)
-        threading.Thread(target=auto_poll, daemon=True).start()
-
-    def confirm_gcash_multi(e=None):
-        num_fuel = len(cart["fuel_items"])
-        num_oil = len(cart["oil_items"])
-
-        if num_fuel == 0 and num_oil == 0:
-            show_snack("Cart is empty", color=RED)
-            return
-
-        grand_total = sum(i["total"] for i in cart["fuel_items"]) + sum(i["total"] for i in cart["oil_items"])
-        if grand_total < 100:
-            show_snack(f"GCash minimum total is ₱100.00 (Current: ₱{grand_total:.2f})", color=RED)
-            return
-
-        attendant_name = auth.get("selected_attendant") or auth.get("user", {}).get("name") or "Attendant 1"
-
-        loading_dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("Creating GCash Checkout..."),
-            content=ft.Column(tight=True, controls=[ft.ProgressRing(), ft.Text("Contacting PayMongo...")])
-        )
-        page.show_dialog(loading_dialog)
-
-        def do_create():
-            try:
-                if num_fuel == 1 and num_oil == 0:
-                    f_item = cart["fuel_items"][0]
-                    gcash_data = create_gcash_dialog_checkout(
-                        auth,
-                        product_type="fuel",
-                        attendant_name=attendant_name,
-                        pump_id=f_item["pump_id"],
-                        liters_sold=f_item["liters_sold"],
-                    )
-                    prod_type = "fuel"
-                elif num_fuel == 0 and num_oil == 1:
-                    o_item = cart["oil_items"][0]
-                    gcash_data = create_gcash_dialog_checkout(
-                        auth,
-                        product_type="oil",
-                        attendant_name=attendant_name,
-                        oil_product_id=o_item["oil_id"],
-                        quantity=o_item["quantity"],
-                    )
-                    prod_type = "oil"
-                else:
-                    f_items = [{"pump_id": f["pump_id"], "liters_sold": f["liters_sold"]} for f in cart["fuel_items"]]
-                    o_items = [{"oil_product_id": o["oil_id"], "quantity": o["quantity"]} for o in cart["oil_items"]]
-
-                    gcash_data = create_gcash_dialog_checkout(
-                        auth,
-                        product_type="multi",
-                        attendant_name=attendant_name,
-                        fuel_items=f_items,
-                        oil_items=o_items,
-                    )
-                    prod_type = "multi"
-
-                def show_qr():
-                    page.pop_dialog()
-                    gcash_qr_dialog(gcash_data, grand_total, prod_type=prod_type)
-                page.run_thread(show_qr)
-            except Exception as ex:
-                error_msg = str(ex)
-                print(f"Multi GCash error: {error_msg}")
-                def show_error():
-                    page.pop_dialog()
-                    show_snack(f"GCash failed: {error_msg}", color=RED)
-                page.run_thread(show_error)
-
-        threading.Thread(target=do_create, daemon=True).start()
-
-    right_summary = ft.Container(
-        width=340, bgcolor="white", padding=20, border_radius=15, margin=10,
-        content=ft.Column(
-            expand=True, spacing=15,
-            controls=[
-                ft.Text("Cart", size=20, weight=ft.FontWeight.BOLD),
-                cart_items_column,
-                ft.Divider(),
-                ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
-                    ft.Text("Total:", size=16, weight=ft.FontWeight.BOLD),
-                    total_text
-                ]),
-                ft.Row(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    spacing=10,
-                    controls=[
-                        ft.FilledButton(
-                            "Cash Checkout",
-                            style=ft.ButtonStyle(bgcolor=RED, color="white"),
-                            expand=True, height=45,
-                            on_click=proceed_checkout
-                        ),
-                        ft.Button(
-                            style=ft.ButtonStyle(bgcolor="#007CFF", color="white"),
-                            expand=True, height=45,
-                            on_click=confirm_gcash_multi,
-                            content=ft.Row(
-                                alignment=ft.MainAxisAlignment.CENTER, tight=True,
-                                controls=[
-                                    ft.Image(src="assets/gcash_logo.png", width=20, height=20, fit=ft.BoxFit.CONTAIN, error_content=ft.Icon(ft.Icons.PAYMENT, size=16, color="white")),
-                                    ft.Text("GCash", weight=ft.FontWeight.BOLD),
-                                ],
-                            ),
-                        ),
-                    ]
-                )
-            ]
-        )
+    cart_badge = ft.Container(
+        content=badge_text, visible=False,
+        bgcolor="white", border=ft.Border.all(1.5, MOBILE_RED), border_radius=10,
+        width=22, height=22, alignment=ft.Alignment.CENTER,
+        right=0, top=0,
+    )
+    cart_fab = ft.Stack(
+        width=68, height=68,
+        right=16, bottom=62,
+        controls=[
+            ft.FloatingActionButton(
+                icon=ft.Icons.SHOPPING_CART_OUTLINED,
+                bgcolor=MOBILE_RED, foreground_color="white",
+                on_click=open_cart_sheet,
+                left=0, bottom=0,
+            ),
+            cart_badge,
+        ],
     )
 
     header = ft.Container(
         bgcolor=RED, height=100, padding=20,
         content=ft.Row(
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER,
             controls=[
-                ft.Row(spacing=10, controls=[
-                    ft.TextButton("← Back", style=ft.ButtonStyle(color="white"), on_click=go_back),
-                    ft.Text("Multi Sale", size=28, weight=ft.FontWeight.BOLD, color="white"),
-                ]),
-                ft.Row(spacing=15, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-                    ft.Text("U-Fuel", size=28, weight=ft.FontWeight.BOLD, color="white"),
-                    ft.Container(width=70, height=70, bgcolor="white", border_radius=12,
-                        content=ft.Image(src="u-fuel_logo.jpg", fit=ft.BoxFit.CONTAIN)),
-                ]),
+                ft.Row(
+                    controls=[
+                        sidebar.menu_button(),
+                        ft.Column(controls=[ft.Text("Cashier", size=16, weight=ft.FontWeight.BOLD, color="white")], spacing=0),
+                    ],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                ft.Row(controls=[ft.Text("U-FUEL", size=16, weight=ft.FontWeight.BOLD, color="white"), ft.Container(content=ft.Image(src="u-fuel_logo.jpg", width=40, height=40, fit=ft.BoxFit.CONTAIN), bgcolor="white", border_radius=8, padding=4, width=40, height=40)], spacing=8),
             ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
+        padding=ft.Padding.only(left=8, right=20, top=10, bottom=10),
+    )
+
+    content_card = ft.Container(
+        content=ft.Column(spacing=8, expand=True, controls=[
+            ft.Row(spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+                ft.IconButton(icon=ft.Icons.ARROW_BACK, icon_color=MOBILE_RED, on_click=go_back),
+                ft.Text("Multi Sale", size=18, weight=ft.FontWeight.BOLD, color=MOBILE_RED),
+            ]),
+            toggle_holder,
+            body_holder,
+        ]),
+        bgcolor="white",
+        border_radius=ft.BorderRadius(top_left=28, top_right=28, bottom_left=0, bottom_right=0),
+        expand=True, padding=ft.Padding.only(top=12, bottom=12),
     )
     footer = ft.Container(
         height=80,
@@ -759,6 +753,20 @@ def build_multi_page(page: ft.Page, auth: dict):
         )
     )
 
-    body = ft.Row(expand=True, controls=[left_content_area, right_summary], spacing=0)
+    toggle_holder.content = build_toggle()
+    body_holder.content = build_body()
+    refresh_cart_ui()
 
-    return ft.Column(spacing=0, expand=True, controls=[header, body, footer])
+    if "fuels_data" not in auth or "oils_data" not in auth:
+        page.run_thread(load_data)
+
+    return ft.SafeArea(
+        content=sidebar.wrap(ft.Stack(
+            expand=True,
+            controls=[
+                ft.Column(controls=[header, ft.Container(height=10), content_card, footer], expand=True, spacing=0),
+                cart_fab,
+            ],
+        )),
+        expand=True,
+    )

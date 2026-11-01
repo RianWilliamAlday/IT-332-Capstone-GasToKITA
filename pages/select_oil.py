@@ -99,7 +99,7 @@ def build_oil_page(page: ft.Page, auth: dict):
 
     def open_oil_dialog(oil: dict):
         oil_id = oil["id"]
-        oil_name = f"{oil['brand']} {oil['name']}"
+        oil_name = f"{oil['brand']} {oil['name']}".strip()
         unit_price = oil["price"]
         stock = oil["stock"]
 
@@ -193,7 +193,7 @@ def build_oil_page(page: ft.Page, auth: dict):
                     from pages.change import build_change_page
                     tx = {
                         "label": oil_name,
-                        "details": f"GCash PAID - ₱{total_amt:.2f}",
+                        "details": f"{qty_captured} x ₱{unit_price:.2f}",
                         "total": total_amt,
                         "quantity": qty_captured,
                         "oil_id": oil_id,
@@ -226,7 +226,7 @@ def build_oil_page(page: ft.Page, auth: dict):
                                 from pages.change import build_change_page
                                 tx = {
                                     "label": oil_name,
-                                    "details": f"GCash PAID - ₱{total_amt:.2f}",
+                                    "details": f"{qty_captured} x ₱{unit_price:.2f}",
                                     "total": total_amt,
                                     "quantity": qty_captured,
                                     "oil_id": oil_id,
@@ -363,9 +363,15 @@ def build_oil_page(page: ft.Page, auth: dict):
             banner.content = None
             banner.padding = 0
 
+        # Filter out items where stock is 0 or less
+        available_oils = [
+            oil for oil in auth.get("oils_data", []) 
+            if oil.get("stock", 0) > 0
+        ]
+
         oil_grid.controls = [
             ft.Container(content=oil_card(oil, open_oil_dialog), col={"sm": 12, "md": 4, "lg": 4})
-            for oil in auth.get("oils_data", [])
+            for oil in available_oils
         ]
         return ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, expand=True, controls=[banner, oil_grid])
 
@@ -418,10 +424,29 @@ def build_oil_page(page: ft.Page, auth: dict):
             ],
         ),
     )
-    footer = ft.Container(height=80,bgcolor=RED, padding=ft.Padding.symmetric(vertical=14, horizontal=24),content=ft.Row([
-                        ft.Container(content=ft.Row([ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16), ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)], spacing=6), bgcolor="#6B6B6B", border_radius=6, padding=ft.Padding.symmetric(vertical=8, horizontal=14), ink=True, on_click=go_logout)
-                        ]
-                    )
+    footer = ft.Container(
+        height=80,
+        bgcolor=RED,
+        padding=ft.Padding.symmetric(vertical=14, horizontal=24),
+        content=ft.Row(
+            alignment=ft.MainAxisAlignment.END,
+            controls=[
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Icon(ft.Icons.LOGOUT, color=TEXT_WHITE, size=16),
+                            ft.Text("LOGOUT", color=TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD)
+                        ],
+                        spacing=6
+                    ),
+                    bgcolor="#6B6B6B",
+                    border_radius=6,
+                    padding=ft.Padding.symmetric(vertical=8, horizontal=14),
+                    ink=True,
+                    on_click=go_logout
                 )
+            ]
+        )
+    )
 
     return ft.Column(spacing=0, expand=True, controls=[header, main_content, footer])
